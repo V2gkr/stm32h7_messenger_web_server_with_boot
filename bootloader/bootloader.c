@@ -9,7 +9,8 @@ void BootSwitchToExtFlash(void){
 
   SCB_DisableICache();
 //  SCB_DisableDCache();
-
+  RCC->D1CCIPR&=~RCC_D1CCIPR_CKPERSEL;
+  RCC->D1CCIPR|=RCC_D1CCIPR_QSPISEL;
   CSP_QSPI_EnableMemoryMappedMode();
   __DSB();
   __ISB();
