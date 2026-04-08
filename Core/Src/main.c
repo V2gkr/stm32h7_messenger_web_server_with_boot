@@ -137,7 +137,6 @@ int main(void)
     CSP_QSPI_WriteMemory(buffer, (SECOND_BANK_ADDR+(i*512))&~0x90000000, 512);
   }
   f_mount(NULL, path, 1);
-  //SCB_CleanInvalidateDCache();
   BootSwitchToExtFlash();
   /* USER CODE END 2 */
 
