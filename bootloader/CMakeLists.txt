@@ -28,6 +28,9 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS TRUE)
 project(${CMAKE_PROJECT_NAME})
 message("Build type: " ${CMAKE_BUILD_TYPE})
 
+# Drivers/Middlewares are generated locally by STM32CubeMX, not committed
+include(../cmake/check_generated_sources.cmake)
+
 # Enable CMake support for ASM and C languages
 enable_language(C ASM)
 
@@ -67,4 +70,12 @@ target_link_libraries(${CMAKE_PROJECT_NAME}
     stm32cubemx
 
     # Add user defined libraries
+)
+
+# Produce a raw .bin alongside the .elf - the bootloader flashes this file
+# from FATFS to QSPI, and the bootloader's own .bin is what gets programmed
+# into internal flash.
+add_custom_command(TARGET ${CMAKE_PROJECT_NAME} POST_BUILD
+    COMMAND ${CMAKE_OBJCOPY} -O binary $<TARGET_FILE:${CMAKE_PROJECT_NAME}> ${CMAKE_PROJECT_NAME}.bin
+    COMMENT "Building ${CMAKE_PROJECT_NAME}.bin"
 )

@@ -1,24 +1,24 @@
 {
-    "version": 3,
+    "version": 4,
     "configurePresets": [
         {
             "name": "default",
             "hidden": true,
             "generator": "Ninja",
             "binaryDir": "${sourceDir}/build/${presetName}",
-		    "toolchainFile": "${sourceDir}/cmake/gcc-arm-none-eabi.cmake",
+            "toolchainFile": "${sourceDir}/../cmake/gcc-arm-none-eabi.cmake",
             "cacheVariables": {
             }
         },
         {
-            "name": "Debug",
+            "name": "firmware-debug",
             "inherits": "default",
             "cacheVariables": {
                 "CMAKE_BUILD_TYPE": "Debug"
             }
         },
         {
-            "name": "Release",
+            "name": "firmware-release",
             "inherits": "default",
             "cacheVariables": {
                 "CMAKE_BUILD_TYPE": "Release"
@@ -27,12 +27,12 @@
     ],
     "buildPresets": [
         {
-            "name": "Debug",
-            "configurePreset": "Debug"
+            "name": "firmware-debug",
+            "configurePreset": "firmware-debug"
         },
         {
-            "name": "Release",
-            "configurePreset": "Release"
+            "name": "firmware-release",
+            "configurePreset": "firmware-release"
         }
     ]
 }

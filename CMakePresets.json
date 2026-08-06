@@ -1,0 +1,7 @@
+{
+    "version": 4,
+    "include": [
+        "bootloader/CMakePresets.json",
+        "firmware/CMakePresets.json"
+    ]
+}

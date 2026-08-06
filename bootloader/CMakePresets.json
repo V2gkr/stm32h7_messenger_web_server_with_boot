@@ -1,24 +1,24 @@
 {
-    "version": 3,
+    "version": 4,
     "configurePresets": [
         {
             "name": "default",
             "hidden": true,
             "generator": "Ninja",
             "binaryDir": "${sourceDir}/build/${presetName}",
-		    "toolchainFile": "${sourceDir}/cmake/gcc-arm-none-eabi.cmake",
+            "toolchainFile": "${sourceDir}/../cmake/gcc-arm-none-eabi.cmake",
             "cacheVariables": {
             }
         },
         {
-            "name": "Debug",
+            "name": "bootloader-debug",
             "inherits": "default",
             "cacheVariables": {
                 "CMAKE_BUILD_TYPE": "Debug"
             }
         },
         {
-            "name": "Release",
+            "name": "bootloader-release",
             "inherits": "default",
             "cacheVariables": {
                 "CMAKE_BUILD_TYPE": "Release"
@@ -27,12 +27,12 @@
     ],
     "buildPresets": [
         {
-            "name": "Debug",
-            "configurePreset": "Debug"
+            "name": "bootloader-debug",
+            "configurePreset": "bootloader-debug"
         },
         {
-            "name": "Release",
-            "configurePreset": "Release"
+            "name": "bootloader-release",
+            "configurePreset": "bootloader-release"
         }
     ]
 }
