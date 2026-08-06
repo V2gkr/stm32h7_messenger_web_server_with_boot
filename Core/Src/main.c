@@ -19,7 +19,6 @@
 /* Includes ------------------------------------------------------------------*/
 #include "main.h"
 #include "fatfs.h"
-#include "memorymap.h"
 #include "quadspi.h"
 #include "sdmmc.h"
 #include "usart.h"
