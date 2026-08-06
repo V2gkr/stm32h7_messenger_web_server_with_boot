@@ -13,5 +13,50 @@
         "files.exclude": {
             "**/build": true
         }
+    },
+    "tasks": {
+        "version": "2.0.0",
+        "tasks": [
+            {
+                "label": "Build bootloader (Debug)",
+                "type": "shell",
+                "command": "${workspaceFolder:bootloader (internal flash)}/../scripts/cube-build.sh",
+                "args": ["bootloader", "bootloader-debug"],
+                "group": "build",
+                "problemMatcher": ["$gcc"]
+            },
+            {
+                "label": "Build bootloader (Release)",
+                "type": "shell",
+                "command": "${workspaceFolder:bootloader (internal flash)}/../scripts/cube-build.sh",
+                "args": ["bootloader", "bootloader-release"],
+                "group": "build",
+                "problemMatcher": ["$gcc"]
+            },
+            {
+                "label": "Build firmware (Debug)",
+                "type": "shell",
+                "command": "${workspaceFolder:bootloader (internal flash)}/../scripts/cube-build.sh",
+                "args": ["firmware", "firmware-debug"],
+                "group": "build",
+                "problemMatcher": ["$gcc"]
+            },
+            {
+                "label": "Build firmware (Release)",
+                "type": "shell",
+                "command": "${workspaceFolder:bootloader (internal flash)}/../scripts/cube-build.sh",
+                "args": ["firmware", "firmware-release"],
+                "group": "build",
+                "problemMatcher": ["$gcc"]
+            },
+            {
+                "label": "Build both (Debug)",
+                "dependsOn": ["Build bootloader (Debug)", "Build firmware (Debug)"],
+                "group": {
+                    "kind": "build",
+                    "isDefault": true
+                }
+            }
+        ]
     }
 }

@@ -49,6 +49,7 @@ target_link_directories(${CMAKE_PROJECT_NAME} PRIVATE
 target_sources(${CMAKE_PROJECT_NAME} PRIVATE
     # Add user sources here
     bootloader/bootloader.c
+    Core/Src/mt25tl01g.c
 )
 
 # Add include paths
