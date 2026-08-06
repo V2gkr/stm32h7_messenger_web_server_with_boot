@@ -1,0 +1,17 @@
+{
+    "folders": [
+        {
+            "name": "bootloader (internal flash)",
+            "path": "bootloader"
+        },
+        {
+            "name": "firmware (external QSPI)",
+            "path": "firmware"
+        }
+    ],
+    "settings": {
+        "files.exclude": {
+            "**/build": true
+        }
+    }
+}
