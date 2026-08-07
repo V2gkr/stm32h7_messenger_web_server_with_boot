@@ -35,6 +35,7 @@
 /* Includes ------------------------------------------------------------------*/
 #include <string.h>
 #include "ff_gen_drv.h"
+#include "mmc_transfer.h"
 
 /* Private typedef -----------------------------------------------------------*/
 /* Private define ------------------------------------------------------------*/
@@ -119,14 +120,13 @@ DRESULT USER_read (
 )
 {
   /* USER CODE BEGIN READ */
-  if(HAL_MMC_ReadBlocks(&hmmc1, buff, sector, count, HAL_MAX_DELAY)!=HAL_OK){
+  /* DMA (SDMMC IDMA) kick-off + wait for HAL_MMC_RxCpltCallback, instead of
+   * the CPU-FIFO-polling blocking HAL_MMC_ReadBlocks() - see mmc_transfer.h.
+   * Called from the main super-loop (via httpd's fs_read_custom -> f_read),
+   * so unlike the USB MSC path this blocks only the caller, not an ISR. */
+  if (MMC_ReadBlocks(buff, sector, count, 1000U) != HAL_OK)
+  {
     return RES_ERROR;
-  }
-  uint32_t timestart=HAL_GetTick();
-  while(HAL_MMC_GetCardState(&hmmc1)!=HAL_MMC_CARD_TRANSFER){
-    if((HAL_GetTick()-timestart)>=1000){
-      return RES_ERROR;
-    }
   }
   return RES_OK;
   /* USER CODE END READ */
@@ -149,17 +149,13 @@ DRESULT USER_write (
 )
 {
   /* USER CODE BEGIN WRITE */
-  if(HAL_MMC_WriteBlocks(&hmmc1, buff, sector, count, HAL_MAX_DELAY)!=HAL_OK){
+  /* See USER_read() above - DMA kick-off + wait, instead of the
+   * CPU-FIFO-polling blocking HAL_MMC_WriteBlocks(). */
+  if (MMC_WriteBlocks(buff, sector, count, 1000U) != HAL_OK)
+  {
     return RES_ERROR;
   }
-  uint32_t timestart=HAL_GetTick();
-  while(HAL_MMC_GetCardState(&hmmc1)!=HAL_MMC_CARD_TRANSFER){
-    if((HAL_GetTick()-timestart)>=1000){
-      return RES_ERROR;
-    }
-  }
-  /* USER CODE HERE */
-    return RES_OK;
+  return RES_OK;
   /* USER CODE END WRITE */
 }
 #endif /* _USE_WRITE == 1 */
@@ -179,8 +175,56 @@ DRESULT USER_ioctl (
 )
 {
   /* USER CODE BEGIN IOCTL */
-    DRESULT res = RES_ERROR;
-    return res;
+  DRESULT res = RES_PARERR;
+
+  if (pdrv != 0)
+  {
+    return RES_PARERR;
+  }
+
+  switch (cmd)
+  {
+    case CTRL_SYNC:
+      /* Writes already block until the DMA transfer completes (see
+       * USER_write() / mmc_transfer.c) - nothing pending to flush. */
+      res = RES_OK;
+      break;
+
+    case GET_SECTOR_COUNT:
+    {
+      HAL_MMC_CardInfoTypeDef info;
+      res = (HAL_MMC_GetCardInfo(&hmmc1, &info) == HAL_OK) ? RES_OK : RES_ERROR;
+      if (res == RES_OK)
+      {
+        *(DWORD *)buff = info.LogBlockNbr;
+      }
+      break;
+    }
+
+    case GET_SECTOR_SIZE:
+    {
+      HAL_MMC_CardInfoTypeDef info;
+      res = (HAL_MMC_GetCardInfo(&hmmc1, &info) == HAL_OK) ? RES_OK : RES_ERROR;
+      if (res == RES_OK)
+      {
+        *(WORD *)buff = (WORD)info.LogBlockSize;
+      }
+      break;
+    }
+
+    case GET_BLOCK_SIZE:
+      /* Erase block size in sectors - not cheaply exposed by HAL_MMC;
+       * report 1 (unknown) rather than fail callers that only need a value. */
+      *(DWORD *)buff = 1;
+      res = RES_OK;
+      break;
+
+    default:
+      res = RES_PARERR;
+      break;
+  }
+
+  return res;
   /* USER CODE END IOCTL */
 }
 #endif /* _USE_IOCTL == 1 */

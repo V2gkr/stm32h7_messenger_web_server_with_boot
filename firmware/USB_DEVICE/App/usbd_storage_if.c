@@ -22,7 +22,7 @@
 #include "usbd_storage_if.h"
 
 /* USER CODE BEGIN INCLUDE */
-
+#include "mmc_transfer.h"
 /* USER CODE END INCLUDE */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -244,14 +244,14 @@ int8_t STORAGE_IsWriteProtected_FS(uint8_t lun)
 int8_t STORAGE_Read_FS(uint8_t lun, uint8_t *buf, uint32_t blk_addr, uint16_t blk_len)
 {
   /* USER CODE BEGIN 6 */
-  if(HAL_MMC_ReadBlocks(&hmmc1, buf, blk_addr, blk_len, HAL_MAX_DELAY)!=HAL_OK){
+  /* DMA (SDMMC IDMA) kick-off + wait for HAL_MMC_RxCpltCallback, instead of
+   * the CPU-FIFO-polling blocking HAL_MMC_ReadBlocks() - see mmc_transfer.h.
+   * Runs inside OTG_FS_IRQHandler; the 1s timeout is only effective because
+   * SysTick now has a higher preemption priority than OTG_FS_IRQn (see NVIC
+   * priorities in usbd_conf.c / stm32h7xx_hal_conf.h). */
+  if (MMC_ReadBlocks(buf, blk_addr, blk_len, 1000U) != HAL_OK)
+  {
     return USBD_FAIL;
-  }
-  uint32_t timestart=HAL_GetTick();
-  while(HAL_MMC_GetCardState(&hmmc1)!=HAL_MMC_CARD_TRANSFER){
-    if((HAL_GetTick()-timestart)>=1000){
-      return USBD_FAIL;
-    }
   }
   return (USBD_OK);
   /* USER CODE END 6 */
@@ -268,15 +268,12 @@ int8_t STORAGE_Read_FS(uint8_t lun, uint8_t *buf, uint32_t blk_addr, uint16_t bl
 int8_t STORAGE_Write_FS(uint8_t lun, uint8_t *buf, uint32_t blk_addr, uint16_t blk_len)
 {
   /* USER CODE BEGIN 7 */
-  if(HAL_MMC_WriteBlocks(&hmmc1, buf, blk_addr, blk_len, HAL_MAX_DELAY)!=HAL_OK){
-     return USBD_FAIL;
-   }
-   uint32_t timestart=HAL_GetTick();
-   while(HAL_MMC_GetCardState(&hmmc1)!=HAL_MMC_CARD_TRANSFER){
-     if((HAL_GetTick()-timestart)>=1000){
-       return USBD_FAIL;
-     }
-   }
+  /* See STORAGE_Read_FS() above - DMA kick-off + wait, instead of the
+   * CPU-FIFO-polling blocking HAL_MMC_WriteBlocks(). */
+  if (MMC_WriteBlocks(buf, blk_addr, blk_len, 1000U) != HAL_OK)
+  {
+    return USBD_FAIL;
+  }
   return (USBD_OK);
   /* USER CODE END 7 */
 }

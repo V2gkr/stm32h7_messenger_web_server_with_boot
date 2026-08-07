@@ -111,7 +111,13 @@ void HAL_PCD_MspInit(PCD_HandleTypeDef* pcdHandle)
     __HAL_RCC_USB_OTG_FS_CLK_ENABLE();
 
     /* Peripheral interrupt init */
-    HAL_NVIC_SetPriority(OTG_FS_IRQn, 0, 0);
+    /* Priority lowered from 0 (was equal to SDMMC1_IRQn and SysTick_IRQn,
+     * see .ioc) to 2, so both SDMMC1_IRQn (still 0) and SysTick_IRQn (now 1,
+     * see TICK_INT_PRIORITY in stm32h7xx_hal_conf.h) can preempt it. This is
+     * what lets MMC_WaitForComplete() (mmc_transfer.c) actually see the
+     * eMMC-transfer-complete flag while spinning inside this ISR, and keeps
+     * HAL_GetTick() ticking during that wait instead of freezing. */
+    HAL_NVIC_SetPriority(OTG_FS_IRQn, 2, 0);
     HAL_NVIC_EnableIRQ(OTG_FS_IRQn);
   /* USER CODE BEGIN USB_OTG_FS_MspInit 1 */
 
@@ -649,7 +655,14 @@ USBD_StatusTypeDef USBD_LL_SetTestMode(USBD_HandleTypeDef *pdev, uint8_t testmod
 void *USBD_static_malloc(uint32_t size)
 {
   UNUSED(size);
-  static uint32_t mem[(sizeof(USBD_MSC_BOT_HandleTypeDef)/4)+1];/* On 32-bit boundary */
+  /* USBD_MSC_BOT_HandleTypeDef embeds the bot_data[MSC_MEDIA_PACKET] block
+   * transfer buffer that STORAGE_Read_FS/Write_FS DMA into/out of (see
+   * mmc_transfer.c) - it must live in non-cacheable memory and be 32-byte
+   * aligned for SDMMC IDMA coherency with the D-Cache enabled in main.c.
+   * Placed in the .mmc_dma_sec section (STM32H750XX_FLASH.ld), inside the
+   * non-cacheable MPU region configured in MPU_Config() (main.c). */
+  static uint32_t mem[(sizeof(USBD_MSC_BOT_HandleTypeDef)/4)+1]
+    __attribute__((section(".mmc_dma_sec"), aligned(32)));/* On 32-bit boundary */
   return mem;
 }
 

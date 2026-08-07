@@ -153,7 +153,12 @@ void HAL_MMC_MspInit(MMC_HandleTypeDef* hmmc)
     HAL_NVIC_SetPriority(SDMMC1_IRQn, 0, 0);
     HAL_NVIC_EnableIRQ(SDMMC1_IRQn);
     /* USER CODE BEGIN SDMMC1_MspInit 1 */
-
+    /* Keep this the highest NVIC preemption priority in the system (0): it
+     * must be able to preempt OTG_FS_IRQn (now priority 2, see usbd_conf.c)
+     * for MMC_WaitForComplete() in mmc_transfer.c to observe eMMC transfer
+     * completion while the USB MSC path spins inside OTG_FS_IRQHandler. If
+     * you regenerate via CubeMX and the .ioc resets this priority, restore
+     * it to 0,0 (and keep SysTick_IRQn / TICK_INT_PRIORITY at 1). */
     /* USER CODE END SDMMC1_MspInit 1 */
 
   }

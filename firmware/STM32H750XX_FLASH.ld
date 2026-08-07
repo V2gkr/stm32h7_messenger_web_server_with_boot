@@ -181,8 +181,18 @@ SECTIONS
     *(.TxDecripSection)
     
     . = ABSOLUTE(0x30000100);
-    *(.Rx_PoolSection) 
+    *(.Rx_PoolSection)
   } >RAM_D2
+
+  /* Non-cacheable DMA buffers for eMMC (SDMMC1 IDMA) transfers - see
+   * mmc_transfer.c / MPU_Config() in main.c. Anchored well past the
+   * lwIP Ethernet descriptors/RX pool above (0x30000000-~0x30005000) and
+   * inside the non-cacheable MPU region (0x30004000, 64KB). */
+  .mmc_dma_sec (NOLOAD) : {
+    . = ABSOLUTE(0x30008000);
+    *(.mmc_dma_sec)
+  } >RAM_D2
+
   .ARM.attributes 0 : { *(.ARM.attributes) }
 }
 
