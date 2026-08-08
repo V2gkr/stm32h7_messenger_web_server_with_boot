@@ -62,6 +62,164 @@
                     "kind": "build",
                     "isDefault": true
                 }
+            },
+            {
+                // Linux equivalent of STM32CubeIDE's "External Loader" flashing
+                // option, for the firmware image that lives in external OSPI
+                // NOR flash. See scripts/cube-flash.sh for details.
+                "label": "Flash firmware: External OSPI Flash (Debug)",
+                "type": "shell",
+                "command": "${workspaceFolder:bootloader (internal flash)}/../scripts/cube-flash.sh",
+                "args": ["flash", "firmware-debug"],
+                "dependsOn": "Build firmware (Debug)",
+                "problemMatcher": [],
+                "presentation": {
+                    "reveal": "always",
+                    "panel": "dedicated",
+                    "clear": true
+                }
+            },
+            {
+                "label": "Flash firmware: External OSPI Flash (Release)",
+                "type": "shell",
+                "command": "${workspaceFolder:bootloader (internal flash)}/../scripts/cube-flash.sh",
+                "args": ["flash", "firmware-release"],
+                "dependsOn": "Build firmware (Release)",
+                "problemMatcher": [],
+                "presentation": {
+                    "reveal": "always",
+                    "panel": "dedicated",
+                    "clear": true
+                }
+            },
+            {
+                // Full erase of the external OSPI flash chip (useful if it ends
+                // up in a bad/unbootable state and normal flashing won't attach
+                // cleanly).
+                "label": "Erase: External OSPI Flash",
+                "type": "shell",
+                "command": "${workspaceFolder:bootloader (internal flash)}/../scripts/cube-flash.sh",
+                "args": ["erase"],
+                "problemMatcher": [],
+                "presentation": {
+                    "reveal": "always",
+                    "panel": "dedicated",
+                    "clear": true
+                }
+            }
+        ]
+    },
+    "launch": {
+        // Debug configs for firmware live here (workspace scope) rather than
+        // in firmware/.vscode/launch.json, because preLaunchTask can only
+        // resolve tasks in the same scope as the launch config -- and the
+        // build/flash tasks above are workspace-scoped (shared shell
+        // commands, not per-folder tasks.json). A folder-scoped launch.json
+        // can't see them, which is why "Build firmware (Debug)" showed up
+        // as "task not found".
+        "version": "0.2.0",
+        "configurations": [
+            {
+                "type": "stlinkgdbtarget",
+                "request": "launch",
+                "name": "STM32Cube: Debug firmware (external OSPI)",
+                "cwd": "${workspaceFolder:firmware (external QSPI)}",
+                "preLaunchTask": "Build firmware (Debug)",
+                "runEntry": "main",
+                // The firmware image lives in external OSPI NOR flash
+                // (0x90000000, see STM32H750XX_FLASH.ld), not internal
+                // flash, so it must be programmed through the MT25TL01G
+                // external loader -- same loader scripts/cube-flash.sh uses.
+                "serverExtLoader": [
+                    {
+                        "loader": "${workspaceFolder:firmware (external QSPI)}/MT25TL01G_STM32H750B-DISCO.stldr",
+                        "initialize": true
+                    }
+                ],
+                // "Connect under reset" halts the core right after reset
+                // instead of letting it run -- same reasoning as
+                // cube-flash.sh's mode=UR: BOOT_ADD0 isn't configured to
+                // point at the OSPI flash, so a normal reset/boot sequence
+                // would land in the internal-flash bootloader instead of
+                // here. The debugger then flashes the image and sets PC from
+                // its vector table directly (via runEntry), the same way
+                // cube-flash.sh's "-g 0x90000000" does, bypassing the
+                // boot-address logic entirely.
+                //
+                // Caveat: this only applies to the initial launch. The debug
+                // session's "Restart" button issues a real device reset
+                // (quickReset's default "monitor reset"), which *will* fall
+                // through BOOT_ADD0 back into the bootloader instead of
+                // re-running firmware. Prefer Stop + re-launch (F5) over
+                // Restart while debugging this project.
+                "serverReset": "Connect under reset",
+                "imagesAndSymbols": [
+                    {
+                        "imageFileName": "${workspaceFolder:firmware (external QSPI)}/build/firmware-debug/stm32h750_messenger_web_server.elf",
+                        "symbolFileName": "${workspaceFolder:firmware (external QSPI)}/build/firmware-debug/stm32h750_messenger_web_server.elf"
+                    }
+                ]
+            },
+            {
+                "type": "stlinkgdbtarget",
+                "request": "launch",
+                "name": "STM32Cube: Attach to firmware (no reflash)",
+                "cwd": "${workspaceFolder:firmware (external QSPI)}",
+                // For debugging a firmware image that was already programmed
+                // via the "Flash firmware: External OSPI Flash" task and is
+                // already running -- loads symbols only, doesn't touch the
+                // target.
+                "serverReset": "None",
+                "imagesAndSymbols": [
+                    {
+                        "symbolFileName": "${workspaceFolder:firmware (external QSPI)}/build/firmware-debug/stm32h750_messenger_web_server.elf"
+                    }
+                ]
+            },
+            {
+                "type": "stlinkgdbtarget",
+                "request": "launch",
+                "name": "STM32Cube: Debug bootloader -> firmware (combined)",
+                "cwd": "${workspaceFolder:bootloader (internal flash)}",
+                "preLaunchTask": "Build both (Debug)",
+                // BootSwitchToExtFlash() (bootloader/bootloader.c) is the
+                // exact spot where the bootloader remaps VTOR and jumps into
+                // the firmware image at 0x90000000 -- stop right there so
+                // you can step across the handoff instruction by
+                // instruction and watch the source view flip from
+                // bootloader.c to firmware's Reset_Handler/main.c. Not
+                // "main": both projects define a main(), so that symbol is
+                // ambiguous once both ELFs are loaded together.
+                "runEntry": "BootSwitchToExtFlash",
+                // Unlike the firmware-only config above, this one wants a
+                // REAL reset: BOOT_ADD0 is what's supposed to select the
+                // internal-flash bootloader in the first place, and we want
+                // that whole reset -> bootloader -> jump chain to actually
+                // happen so the transition can be observed.
+                "serverReset": "Software system reset",
+                // Firmware still lives in external OSPI and needs the same
+                // external loader as the other configs.
+                "serverExtLoader": [
+                    {
+                        "loader": "${workspaceFolder:firmware (external QSPI)}/MT25TL01G_STM32H750B-DISCO.stldr",
+                        "initialize": true
+                    }
+                ],
+                // Both images get flashed to their respective addresses
+                // (internal flash for bootloader, external OSPI for
+                // firmware via the loader above) and both sets of symbols
+                // are loaded into the same GDB session -- that's what makes
+                // "where am I" resolve correctly on both sides of the jump.
+                "imagesAndSymbols": [
+                    {
+                        "imageFileName": "${workspaceFolder:bootloader (internal flash)}/build/bootloader-debug/qspi_bootloader.elf",
+                        "symbolFileName": "${workspaceFolder:bootloader (internal flash)}/build/bootloader-debug/qspi_bootloader.elf"
+                    },
+                    {
+                        "imageFileName": "${workspaceFolder:firmware (external QSPI)}/build/firmware-debug/stm32h750_messenger_web_server.elf",
+                        "symbolFileName": "${workspaceFolder:firmware (external QSPI)}/build/firmware-debug/stm32h750_messenger_web_server.elf"
+                    }
+                ]
             }
         ]
     }

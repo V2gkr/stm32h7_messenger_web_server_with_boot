@@ -18,6 +18,7 @@
 /* USER CODE END Header */
 /* Includes ------------------------------------------------------------------*/
 #include "main.h"
+#include "cmsis_os.h"
 #include "fatfs.h"
 #include "lwip.h"
 #include "usb_device.h"
@@ -28,6 +29,8 @@
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
+typedef StaticTask_t osStaticThreadDef_t;
+typedef StaticSemaphore_t osStaticMutexDef_t;
 /* USER CODE BEGIN PTD */
 
 /* USER CODE END PTD */
@@ -46,6 +49,26 @@
 
 MMC_HandleTypeDef hmmc1;
 
+/* Definitions for MemoryTask */
+osThreadId_t MemoryTaskHandle;
+uint32_t MemoryTaskBuffer[ 128 ];
+osStaticThreadDef_t MemoryTaskControlBlock;
+const osThreadAttr_t MemoryTask_attributes = {
+  .name = "MemoryTask",
+  .cb_mem = &MemoryTaskControlBlock,
+  .cb_size = sizeof(MemoryTaskControlBlock),
+  .stack_mem = &MemoryTaskBuffer[0],
+  .stack_size = sizeof(MemoryTaskBuffer),
+  .priority = (osPriority_t) osPriorityNormal,
+};
+/* Definitions for SdmmcMutex */
+osMutexId_t SdmmcMutexHandle;
+osStaticMutexDef_t SdmmcMutexControlBlock;
+const osMutexAttr_t SdmmcMutex_attributes = {
+  .name = "SdmmcMutex",
+  .cb_mem = &SdmmcMutexControlBlock,
+  .cb_size = sizeof(SdmmcMutexControlBlock),
+};
 /* USER CODE BEGIN PV */
 
 /* USER CODE END PV */
@@ -55,6 +78,8 @@ void SystemClock_Config(void);
 static void MPU_Config(void);
 static void MX_GPIO_Init(void);
 static void MX_SDMMC1_MMC_Init(void);
+void StartMemoryTask(void *argument);
+
 /* USER CODE BEGIN PFP */
 
 /* USER CODE END PFP */
@@ -75,8 +100,6 @@ int main(void)
 {
 
   /* USER CODE BEGIN 1 */
-  //int wait = 10000000;
-  //while (wait-- >0);  // Wait for sometime before initializing the systems
   /* USER CODE END 1 */
 
   /* MPU Configuration--------------------------------------------------------*/
@@ -105,7 +128,9 @@ int main(void)
   SystemClock_Config();
 
   /* USER CODE BEGIN SysInit */
+  //changed qspi clock from bootloader config to faster
   RCC->D1CCIPR|=RCC_D1CCIPR_QSPISEL_0;
+
   __HAL_RCC_ETH1MAC_CLK_ENABLE();
   __HAL_RCC_ETH1TX_CLK_ENABLE();
   __HAL_RCC_ETH1RX_CLK_ENABLE();
@@ -114,22 +139,60 @@ int main(void)
   /* Initialize all configured peripherals */
   MX_GPIO_Init();
   MX_SDMMC1_MMC_Init();
-  MX_USB_DEVICE_Init();
-  MX_LWIP_Init();
   MX_FATFS_Init();
   /* USER CODE BEGIN 2 */
-  FATFS_LinkDriver(&USER_Driver,path);
-  disk_initialize(0);
-  f_mount(&fs, path, 1);
-  httpd_init();
+  // FATFS_LinkDriver(&USER_Driver,path);
+  // disk_initialize(0);
+  // f_mount(&fs, path, 1);
+  HAL_GPIO_WritePin(GPIOI, GPIO_PIN_13,1);
+  HAL_GPIO_WritePin(GPIOJ, GPIO_PIN_2,0);
   /* USER CODE END 2 */
+
+  /* Init scheduler */
+  osKernelInitialize();
+  /* Create the mutex(es) */
+  /* creation of SdmmcMutex */
+  SdmmcMutexHandle = osMutexNew(&SdmmcMutex_attributes);
+
+  /* USER CODE BEGIN RTOS_MUTEX */
+  /* add mutexes, ... */
+  /* USER CODE END RTOS_MUTEX */
+
+  /* USER CODE BEGIN RTOS_SEMAPHORES */
+  /* add semaphores, ... */
+  /* USER CODE END RTOS_SEMAPHORES */
+
+  /* USER CODE BEGIN RTOS_TIMERS */
+  /* start timers, add new ones, ... */
+  /* USER CODE END RTOS_TIMERS */
+
+  /* USER CODE BEGIN RTOS_QUEUES */
+  /* add queues, ... */
+  /* USER CODE END RTOS_QUEUES */
+
+  /* Create the thread(s) */
+  /* creation of MemoryTask */
+  MemoryTaskHandle = osThreadNew(StartMemoryTask, NULL, &MemoryTask_attributes);
+
+  /* USER CODE BEGIN RTOS_THREADS */
+  /* add threads, ... */
+  /* USER CODE END RTOS_THREADS */
+
+  /* USER CODE BEGIN RTOS_EVENTS */
+  /* add events, ... */
+  /* USER CODE END RTOS_EVENTS */
+
+  /* Start scheduler */
+  osKernelStart();
+
+  /* We should never get here as control is now taken by the scheduler */
 
   /* Infinite loop */
   /* USER CODE BEGIN WHILE */
   while (1)
   {
     //tcp_client_service();
-    MX_LWIP_Process();
+    //MX_LWIP_Process();
     if((HAL_GetTick()-counter)>1000){
       counter=HAL_GetTick();
       HAL_GPIO_TogglePin(GPIOI, GPIO_PIN_13);
@@ -286,6 +349,35 @@ static void MX_GPIO_Init(void)
 
 /* USER CODE END 4 */
 
+/* USER CODE BEGIN Header_StartMemoryTask */
+/**
+  * @brief  Function implementing the MemoryTask thread.
+  * @param  argument: Not used
+  * @retval None
+  */
+/* USER CODE END Header_StartMemoryTask */
+void StartMemoryTask(void *argument)
+{
+  /* init code for USB_DEVICE */
+  MX_USB_DEVICE_Init();
+
+  /* init code for LWIP */
+  MX_LWIP_Init();
+  /* USER CODE BEGIN 5 */
+  httpd_init();
+  /* Infinite loop */
+  for(;;)
+  {
+    if((HAL_GetTick()-counter)>500){
+      counter=HAL_GetTick();
+      HAL_GPIO_TogglePin(GPIOI, GPIO_PIN_13);
+      HAL_GPIO_TogglePin(GPIOJ, GPIO_PIN_2);
+    }
+    osDelay(1);
+  }
+  /* USER CODE END 5 */
+}
+
  /* MPU Configuration */
 
 void MPU_Config(void)
@@ -334,6 +426,28 @@ void MPU_Config(void)
   /* Enables the MPU */
   HAL_MPU_Enable(MPU_PRIVILEGED_DEFAULT);
 
+}
+
+/**
+  * @brief  Period elapsed callback in non blocking mode
+  * @note   This function is called  when TIM6 interrupt took place, inside
+  * HAL_TIM_IRQHandler(). It makes a direct call to HAL_IncTick() to increment
+  * a global variable "uwTick" used as application time base.
+  * @param  htim : TIM handle
+  * @retval None
+  */
+void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
+{
+  /* USER CODE BEGIN Callback 0 */
+
+  /* USER CODE END Callback 0 */
+  if (htim->Instance == TIM6)
+  {
+    HAL_IncTick();
+  }
+  /* USER CODE BEGIN Callback 1 */
+
+  /* USER CODE END Callback 1 */
 }
 
 /**

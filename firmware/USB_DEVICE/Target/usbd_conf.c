@@ -111,16 +111,15 @@ void HAL_PCD_MspInit(PCD_HandleTypeDef* pcdHandle)
     __HAL_RCC_USB_OTG_FS_CLK_ENABLE();
 
     /* Peripheral interrupt init */
-    /* Priority lowered from 0 (was equal to SDMMC1_IRQn and SysTick_IRQn,
-     * see .ioc) to 2, so both SDMMC1_IRQn (still 0) and SysTick_IRQn (now 1,
-     * see TICK_INT_PRIORITY in stm32h7xx_hal_conf.h) can preempt it. This is
-     * what lets MMC_WaitForComplete() (mmc_transfer.c) actually see the
-     * eMMC-transfer-complete flag while spinning inside this ISR, and keeps
-     * HAL_GetTick() ticking during that wait instead of freezing. */
-    HAL_NVIC_SetPriority(OTG_FS_IRQn, 2, 0);
+    HAL_NVIC_SetPriority(OTG_FS_IRQn, 7, 0);
     HAL_NVIC_EnableIRQ(OTG_FS_IRQn);
   /* USER CODE BEGIN USB_OTG_FS_MspInit 1 */
-
+  /* Priority lowered from 0 (was equal to SDMMC1_IRQn and SysTick_IRQn,
+  * see .ioc) to 2, so both SDMMC1_IRQn (still 0) and SysTick_IRQn (now 1,
+  * see TICK_INT_PRIORITY in stm32h7xx_hal_conf.h) can preempt it. This is
+  * what lets MMC_WaitForComplete() (mmc_transfer.c) actually see the
+  * eMMC-transfer-complete flag while spinning inside this ISR, and keeps
+  * HAL_GetTick() ticking during that wait instead of freezing. */
   /* USER CODE END USB_OTG_FS_MspInit 1 */
   }
 }
