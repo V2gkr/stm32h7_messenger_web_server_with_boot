@@ -90,6 +90,12 @@ uint32_t counter=0;
 FATFS fs;
 char path[4];
 FIL fil;
+
+void FS_Init(void){
+  FATFS_LinkDriver(&USER_Driver,path);
+  disk_initialize(0);
+  f_mount(&fs, path, 1);  
+}
 /* USER CODE END 0 */
 
 /**
@@ -376,6 +382,7 @@ void StartMemoryTask(void *argument)
   MX_LWIP_Init();
   /* USER CODE BEGIN 5 */
   httpd_init();
+  FS_Init();
   /* Infinite loop */
   for(;;)
   {

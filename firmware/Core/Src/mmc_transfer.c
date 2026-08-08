@@ -5,8 +5,25 @@
   ******************************************************************************
   */
 #include "mmc_transfer.h"
+#include <string.h>
 
 extern MMC_HandleTypeDef hmmc1;
+
+/* DMA bounce buffer: 16 blocks (8 KB) transferred per HAL_MMC_*Blocks_DMA
+ * call. Placed in .mmc_dma_sec (STM32H750XX_FLASH.ld), inside the
+ * non-cacheable MPU region set up in MPU_Config() (main.c) - so it is never
+ * cached and needs no manual Clean/InvalidateDCache_by_Addr() calls at all.
+ * Both the USB MSC path (usbd_storage_if.c) and the FatFs path
+ * (user_diskio.c) share this single buffer; s_xferBusy below ensures only
+ * one transfer uses it at a time. 16 is a multiple of 8, so chunking here
+ * never breaks the 4K-native-sector alignment rule some eMMC parts enforce
+ * (HAL_MMC_*Blocks_DMA requires BlockAdd/NumberOfBlocks % 8 == 0 in that
+ * case) as long as the caller's blk_addr was already sector-aligned. */
+#define MMC_BOUNCE_BLOCKS   16U
+#define MMC_BOUNCE_BYTES    (MMC_BOUNCE_BLOCKS * MMC_TRANSFER_BLOCK_SIZE)
+
+static uint8_t s_bounce[MMC_BOUNCE_BYTES]
+  __attribute__((section(".mmc_dma_sec"), aligned(32)));
 
 /* Set from HAL_MMC_RxCpltCallback/TxCpltCallback/ErrorCallback, which run
  * from SDMMC1_IRQn. Plain volatile flags are enough here: there is a single
@@ -15,12 +32,15 @@ extern MMC_HandleTypeDef hmmc1;
 static volatile uint8_t s_xferDone  = 0;
 static volatile uint8_t s_xferError = 0;
 
-/* Simple re-entrancy guard: hmmc1 is shared between the USB MSC path
- * (called from OTG_FS_IRQHandler) and the FatFs path (called from the main
- * super-loop / a future FreeRTOS task), and HAL_MMC only supports one
- * transfer in flight. This is a stand-in for a proper RTOS mutex - the
- * acquire/release pair below is what to replace with
- * osMutexAcquire()/osMutexRelease() once FreeRTOS is available. */
+/* Simple re-entrancy guard: hmmc1 (and s_bounce) are shared between the USB
+ * MSC path (called from OTG_FS_IRQHandler) and the FatFs path (called from
+ * a FreeRTOS task), and only one transfer can use the bounce buffer / HAL_MMC
+ * state machine at a time. This is IRQ-mask based on purpose, NOT a FreeRTOS
+ * mutex: the USB MSC path runs inside a hardware ISR, where taking a real
+ * RTOS mutex is not valid usage (no ISR-safe blocking semantics for
+ * priority-inheritance mutexes). If a task-level FreeRTOS mutex is added for
+ * extra safety between multiple tasks, keep this guard underneath it - it's
+ * still the only thing that can exclude the ISR path. */
 static volatile uint8_t s_xferBusy = 0;
 
 static HAL_StatusTypeDef MMC_AcquireBus(void)
@@ -28,7 +48,7 @@ static HAL_StatusTypeDef MMC_AcquireBus(void)
   HAL_StatusTypeDef result = HAL_OK;
 
   /* Check-and-set must be atomic with respect to OTG_FS_IRQn, which can
-   * preempt a FatFs-path transfer already in progress in the main loop. */
+   * preempt a FatFs-path transfer already in progress in a task. */
   __disable_irq();
   if (s_xferBusy != 0U)
   {
@@ -46,17 +66,6 @@ static HAL_StatusTypeDef MMC_AcquireBus(void)
 static void MMC_ReleaseBus(void)
 {
   s_xferBusy = 0U;
-}
-
-/* Rounds [addr, addr+len) out to enclosing 32-byte cache-line boundaries,
- * as required by SCB_(Clean|Invalidate)DCache_by_Addr(). */
-static void MMC_CacheRange(uint32_t addr, uint32_t len, uint32_t *out_addr, int32_t *out_len)
-{
-  uint32_t start = addr & ~0x1FUL;
-  uint32_t end   = (addr + len + 0x1FUL) & ~0x1FUL;
-
-  *out_addr = start;
-  *out_len  = (int32_t)(end - start);
 }
 
 /**
@@ -114,20 +123,35 @@ HAL_StatusTypeDef MMC_ReadBlocks(uint8_t *buf, uint32_t blk_addr, uint32_t blk_l
     return status;
   }
 
-  s_xferDone  = 0U;
-  s_xferError = 0U;
+  uint32_t remaining = blk_len;
+  uint32_t addr = blk_addr;
+  uint8_t *dst = buf;
 
-  status = HAL_MMC_ReadBlocks_DMA(&hmmc1, buf, blk_addr, blk_len);
-  if (status == HAL_OK)
+  while (remaining > 0U)
   {
-    status = MMC_WaitForComplete(timeout_ms);
+    uint32_t chunk = (remaining > MMC_BOUNCE_BLOCKS) ? MMC_BOUNCE_BLOCKS : remaining;
 
-    /* IDMA (bus master) wrote directly to buf - invalidate so the CPU
-     * doesn't read stale cached data. */
-    uint32_t addr;
-    int32_t len;
-    MMC_CacheRange((uint32_t)buf, blk_len * MMC_TRANSFER_BLOCK_SIZE, &addr, &len);
-    SCB_InvalidateDCache_by_Addr((uint32_t *)addr, len);
+    s_xferDone  = 0U;
+    s_xferError = 0U;
+
+    status = HAL_MMC_ReadBlocks_DMA(&hmmc1, s_bounce, addr, chunk);
+    if (status == HAL_OK)
+    {
+      status = MMC_WaitForComplete(timeout_ms);
+    }
+    if (status != HAL_OK)
+    {
+      break;
+    }
+
+    /* s_bounce lives in non-cacheable memory (.mmc_dma_sec) - no
+     * SCB_InvalidateDCache_by_Addr() needed, IDMA's writes are already
+     * visible to the CPU. */
+    memcpy(dst, s_bounce, chunk * MMC_TRANSFER_BLOCK_SIZE);
+
+    dst      += chunk * MMC_TRANSFER_BLOCK_SIZE;
+    addr     += chunk;
+    remaining -= chunk;
   }
 
   MMC_ReleaseBus();
@@ -143,19 +167,34 @@ HAL_StatusTypeDef MMC_WriteBlocks(const uint8_t *buf, uint32_t blk_addr, uint32_
     return status;
   }
 
-  s_xferDone  = 0U;
-  s_xferError = 0U;
+  uint32_t remaining = blk_len;
+  uint32_t addr = blk_addr;
+  const uint8_t *src = buf;
 
-  /* Push CPU writes out to RAM before IDMA (bus master) reads them. */
-  uint32_t addr;
-  int32_t len;
-  MMC_CacheRange((uint32_t)buf, blk_len * MMC_TRANSFER_BLOCK_SIZE, &addr, &len);
-  SCB_CleanDCache_by_Addr((uint32_t *)addr, len);
-
-  status = HAL_MMC_WriteBlocks_DMA(&hmmc1, buf, blk_addr, blk_len);
-  if (status == HAL_OK)
+  while (remaining > 0U)
   {
-    status = MMC_WaitForComplete(timeout_ms);
+    uint32_t chunk = (remaining > MMC_BOUNCE_BLOCKS) ? MMC_BOUNCE_BLOCKS : remaining;
+
+    /* s_bounce lives in non-cacheable memory - no SCB_CleanDCache_by_Addr()
+     * needed, IDMA will read exactly what memcpy() just wrote. */
+    memcpy(s_bounce, src, chunk * MMC_TRANSFER_BLOCK_SIZE);
+
+    s_xferDone  = 0U;
+    s_xferError = 0U;
+
+    status = HAL_MMC_WriteBlocks_DMA(&hmmc1, s_bounce, addr, chunk);
+    if (status == HAL_OK)
+    {
+      status = MMC_WaitForComplete(timeout_ms);
+    }
+    if (status != HAL_OK)
+    {
+      break;
+    }
+
+    src      += chunk * MMC_TRANSFER_BLOCK_SIZE;
+    addr     += chunk;
+    remaining -= chunk;
   }
 
   MMC_ReleaseBus();
