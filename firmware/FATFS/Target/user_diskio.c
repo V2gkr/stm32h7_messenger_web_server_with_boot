@@ -44,6 +44,7 @@
 /* Disk status */
 static volatile DSTATUS Stat = STA_NOINIT;
 extern MMC_HandleTypeDef hmmc1;
+extern osMessageQueueId_t memoryqueueHandle;
 /* USER CODE END DECL */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -120,15 +121,35 @@ DRESULT USER_read (
 )
 {
   /* USER CODE BEGIN READ */
+  //status for sdmmc operation 
+  uint32_t memory_status;
+  //get actual thread handle 
+  TaskHandle_t handle=xTaskGetCurrentTaskHandle();
+  //create data structure to send data to queue
+  FsDataStruct fsdata={.handle=handle,.addr=sector,.buf=buff,.size=count,.operation_type=MEM_READ};
+  //put data in queue , timeout 10ms , check queue status in case of timeout 
+  osStatus_t queue_status=osMessageQueuePut(memoryqueueHandle, &fsdata, 0, 1000);//0 -> priority is ignored in code 
+  switch(queue_status){
+    case osErrorTimeout:
+      return RES_NOTRDY;
+    case osOK:
+      break;
+    default:
+      return RES_ERROR;
+  }
+  BaseType_t notification_status=xTaskNotifyWait(0, 0xFFFFFFFF, &memory_status, 1000);
+  if(notification_status!=pdTRUE)
+    return RES_ERROR;
+  //deprecated code , moved to separate task
   /* DMA (SDMMC IDMA) kick-off + wait for HAL_MMC_RxCpltCallback, instead of
    * the CPU-FIFO-polling blocking HAL_MMC_ReadBlocks() - see mmc_transfer.h.
    * Called from the main super-loop (via httpd's fs_read_custom -> f_read),
    * so unlike the USB MSC path this blocks only the caller, not an ISR. */
-  if (MMC_ReadBlocks(buff, sector, count, 1000U) != HAL_OK)
-  {
-    return RES_ERROR;
-  }
-  return RES_OK;
+  // if (MMC_ReadBlocks(buff, sector, count, 1000U) != HAL_OK)
+  // {
+  //   return RES_ERROR;
+  // }
+  return memory_status;
   /* USER CODE END READ */
 }
 
@@ -149,12 +170,31 @@ DRESULT USER_write (
 )
 {
   /* USER CODE BEGIN WRITE */
+  //status for sdmmc operation 
+  uint32_t memory_status;
+  TaskHandle_t handle=xTaskGetCurrentTaskHandle();
+  //create data structure to send data to queue
+  FsDataStruct fsdata={.handle=handle,.addr=sector,.buf=buff,.size=count,.operation_type=MEM_WRITE};
+  //put data in queue , timeout 10ms , check queue status in case of timeout 
+  osStatus_t queue_status=osMessageQueuePut(memoryqueueHandle, &fsdata, 0, 100);//0 -> priority is ignored in code 
+  switch(queue_status){
+    case osErrorTimeout:
+      return RES_NOTRDY;
+    case osOK:
+      break;
+    default:
+      return RES_ERROR;
+  }
+  //we get a notification about status of write operation
+  BaseType_t notification_status=xTaskNotifyWait(0, 0xFFFFFFFF, &memory_status, 10);
+  if(notification_status!=pdTRUE)
+    return RES_ERROR;
   /* See USER_read() above - DMA kick-off + wait, instead of the
    * CPU-FIFO-polling blocking HAL_MMC_WriteBlocks(). */
-  if (MMC_WriteBlocks(buff, sector, count, 1000U) != HAL_OK)
-  {
-    return RES_ERROR;
-  }
+  // if (MMC_WriteBlocks(buff, sector, count, 1000U) != HAL_OK)
+  // {
+  //   return RES_ERROR;
+  // }
   return RES_OK;
   /* USER CODE END WRITE */
 }
@@ -175,56 +215,58 @@ DRESULT USER_ioctl (
 )
 {
   /* USER CODE BEGIN IOCTL */
-  DRESULT res = RES_PARERR;
+  //lets not make ioctl atm
+  // DRESULT res = RES_PARERR;
 
-  if (pdrv != 0)
-  {
-    return RES_PARERR;
-  }
+  // if (pdrv != 0)
+  // {
+  //   return RES_PARERR;
+  // }
 
-  switch (cmd)
-  {
-    case CTRL_SYNC:
-      /* Writes already block until the DMA transfer completes (see
-       * USER_write() / mmc_transfer.c) - nothing pending to flush. */
-      res = RES_OK;
-      break;
+  // switch (cmd)
+  // {
+  //   case CTRL_SYNC:
+  //     /* Writes already block until the DMA transfer completes (see
+  //      * USER_write() / mmc_transfer.c) - nothing pending to flush. */
+  //     res = RES_OK;
+  //     break;
 
-    case GET_SECTOR_COUNT:
-    {
-      HAL_MMC_CardInfoTypeDef info;
-      res = (HAL_MMC_GetCardInfo(&hmmc1, &info) == HAL_OK) ? RES_OK : RES_ERROR;
-      if (res == RES_OK)
-      {
-        *(DWORD *)buff = info.LogBlockNbr;
-      }
-      break;
-    }
+  //   case GET_SECTOR_COUNT:
+  //   {
+  //     HAL_MMC_CardInfoTypeDef info;
+  //     res = (HAL_MMC_GetCardInfo(&hmmc1, &info) == HAL_OK) ? RES_OK : RES_ERROR;
+  //     if (res == RES_OK)
+  //     {
+  //       *(DWORD *)buff = info.LogBlockNbr;
+  //     }
+  //     break;
+  //   }
 
-    case GET_SECTOR_SIZE:
-    {
-      HAL_MMC_CardInfoTypeDef info;
-      res = (HAL_MMC_GetCardInfo(&hmmc1, &info) == HAL_OK) ? RES_OK : RES_ERROR;
-      if (res == RES_OK)
-      {
-        *(WORD *)buff = (WORD)info.LogBlockSize;
-      }
-      break;
-    }
+  //   case GET_SECTOR_SIZE:
+  //   {
+  //     HAL_MMC_CardInfoTypeDef info;
+  //     res = (HAL_MMC_GetCardInfo(&hmmc1, &info) == HAL_OK) ? RES_OK : RES_ERROR;
+  //     if (res == RES_OK)
+  //     {
+  //       *(WORD *)buff = (WORD)info.LogBlockSize;
+  //     }
+  //     break;
+  //   }
 
-    case GET_BLOCK_SIZE:
-      /* Erase block size in sectors - not cheaply exposed by HAL_MMC;
-       * report 1 (unknown) rather than fail callers that only need a value. */
-      *(DWORD *)buff = 1;
-      res = RES_OK;
-      break;
+  //   case GET_BLOCK_SIZE:
+  //     /* Erase block size in sectors - not cheaply exposed by HAL_MMC;
+  //      * report 1 (unknown) rather than fail callers that only need a value. */
+  //     *(DWORD *)buff = 1;
+  //     res = RES_OK;
+  //     break;
 
-    default:
-      res = RES_PARERR;
-      break;
-  }
+  //   default:
+  //     res = RES_PARERR;
+  //     break;
+  // }
 
-  return res;
+  //return res;
+  return RES_OK;
   /* USER CODE END IOCTL */
 }
 #endif /* _USE_IOCTL == 1 */

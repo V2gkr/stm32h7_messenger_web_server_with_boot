@@ -61,6 +61,7 @@
 #ifndef MMC_TRANSFER_H
 #define MMC_TRANSFER_H
 
+#include "cmsis_os.h"
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -69,6 +70,21 @@ extern "C" {
 
 /** eMMC logical block size in bytes (matches STORAGE_BLK_SIZ / FatFs sector size). */
 #define MMC_TRANSFER_BLOCK_SIZE   512U
+
+typedef struct{
+  uint8_t * buf;
+  uint32_t size;
+  uint32_t addr;
+  TaskHandle_t handle;
+  uint8_t operation_type;
+}FsDataStruct;
+
+enum memory_operation_type{
+  MEM_WRITE,
+  MEM_READ
+};
+
+void MMC_ProcessRequest(FsDataStruct *dataStruct);
 
 /**
   * @brief  Read blk_len blocks starting at blk_addr into buf.

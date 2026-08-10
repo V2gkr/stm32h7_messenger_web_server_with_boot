@@ -20,17 +20,21 @@
 #include "main.h"
 #include "cmsis_os.h"
 #include "fatfs.h"
+#include "ff.h"
 #include "lwip.h"
 #include "usb_device.h"
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
 #include "httpd.h"
+#include "mmc_transfer.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
 typedef StaticTask_t osStaticThreadDef_t;
+typedef StaticQueue_t osStaticMessageQDef_t;
 typedef StaticSemaphore_t osStaticMutexDef_t;
+typedef StaticSemaphore_t osStaticSemaphoreDef_t;
 /* USER CODE BEGIN PTD */
 
 /* USER CODE END PTD */
@@ -51,7 +55,7 @@ MMC_HandleTypeDef hmmc1;
 
 /* Definitions for MemoryTask */
 osThreadId_t MemoryTaskHandle;
-uint32_t MemoryTaskBuffer[ 128 ];
+uint32_t MemoryTaskBuffer[ 400 ];
 osStaticThreadDef_t MemoryTaskControlBlock;
 const osThreadAttr_t MemoryTask_attributes = {
   .name = "MemoryTask",
@@ -59,7 +63,30 @@ const osThreadAttr_t MemoryTask_attributes = {
   .cb_size = sizeof(MemoryTaskControlBlock),
   .stack_mem = &MemoryTaskBuffer[0],
   .stack_size = sizeof(MemoryTaskBuffer),
+  .priority = (osPriority_t) osPriorityHigh,
+};
+/* Definitions for myTask02 */
+osThreadId_t myTask02Handle;
+uint32_t myTask02Buffer[ 400 ];
+osStaticThreadDef_t myTask02ControlBlock;
+const osThreadAttr_t myTask02_attributes = {
+  .name = "myTask02",
+  .cb_mem = &myTask02ControlBlock,
+  .cb_size = sizeof(myTask02ControlBlock),
+  .stack_mem = &myTask02Buffer[0],
+  .stack_size = sizeof(myTask02Buffer),
   .priority = (osPriority_t) osPriorityNormal,
+};
+/* Definitions for memoryqueue */
+osMessageQueueId_t memoryqueueHandle;
+uint8_t memoryqueueBuffer[ 10 * sizeof( FsDataStruct ) ];
+osStaticMessageQDef_t memoryqueueControlBlock;
+const osMessageQueueAttr_t memoryqueue_attributes = {
+  .name = "memoryqueue",
+  .cb_mem = &memoryqueueControlBlock,
+  .cb_size = sizeof(memoryqueueControlBlock),
+  .mq_mem = &memoryqueueBuffer,
+  .mq_size = sizeof(memoryqueueBuffer)
 };
 /* Definitions for SdmmcMutex */
 osMutexId_t SdmmcMutexHandle;
@@ -68,6 +95,14 @@ const osMutexAttr_t SdmmcMutex_attributes = {
   .name = "SdmmcMutex",
   .cb_mem = &SdmmcMutexControlBlock,
   .cb_size = sizeof(SdmmcMutexControlBlock),
+};
+/* Definitions for sdmmc_sem */
+osSemaphoreId_t sdmmc_semHandle;
+osStaticSemaphoreDef_t sdmmc_semControlBlock;
+const osSemaphoreAttr_t sdmmc_sem_attributes = {
+  .name = "sdmmc_sem",
+  .cb_mem = &sdmmc_semControlBlock,
+  .cb_size = sizeof(sdmmc_semControlBlock),
 };
 /* USER CODE BEGIN PV */
 
@@ -79,6 +114,7 @@ static void MPU_Config(void);
 static void MX_GPIO_Init(void);
 static void MX_SDMMC1_MMC_Init(void);
 void StartMemoryTask(void *argument);
+void StartTask02(void *argument);
 
 /* USER CODE BEGIN PFP */
 
@@ -86,16 +122,16 @@ void StartMemoryTask(void *argument);
 
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
-uint32_t counter=0;
+
 FATFS fs;
 char path[4];
-FIL fil;
 
 void FS_Init(void){
   FATFS_LinkDriver(&USER_Driver,path);
   disk_initialize(0);
-  f_mount(&fs, path, 1);  
+   
 }
+uint8_t buf[200]={0};
 /* USER CODE END 0 */
 
 /**
@@ -164,6 +200,10 @@ int main(void)
   /* add mutexes, ... */
   /* USER CODE END RTOS_MUTEX */
 
+  /* Create the semaphores(s) */
+  /* creation of sdmmc_sem */
+  sdmmc_semHandle = osSemaphoreNew(1, 0, &sdmmc_sem_attributes);
+
   /* USER CODE BEGIN RTOS_SEMAPHORES */
   /* add semaphores, ... */
   /* USER CODE END RTOS_SEMAPHORES */
@@ -172,6 +212,10 @@ int main(void)
   /* start timers, add new ones, ... */
   /* USER CODE END RTOS_TIMERS */
 
+  /* Create the queue(s) */
+  /* creation of memoryqueue */
+  memoryqueueHandle = osMessageQueueNew (10, sizeof(FsDataStruct), &memoryqueue_attributes);
+
   /* USER CODE BEGIN RTOS_QUEUES */
   /* add queues, ... */
   /* USER CODE END RTOS_QUEUES */
@@ -179,6 +223,9 @@ int main(void)
   /* Create the thread(s) */
   /* creation of MemoryTask */
   MemoryTaskHandle = osThreadNew(StartMemoryTask, NULL, &MemoryTask_attributes);
+
+  /* creation of myTask02 */
+  myTask02Handle = osThreadNew(StartTask02, NULL, &myTask02_attributes);
 
   /* USER CODE BEGIN RTOS_THREADS */
   /* add threads, ... */
@@ -199,11 +246,11 @@ int main(void)
   {
     //tcp_client_service();
     //MX_LWIP_Process();
-    if((HAL_GetTick()-counter)>1000){
-      counter=HAL_GetTick();
-      HAL_GPIO_TogglePin(GPIOI, GPIO_PIN_13);
-      HAL_GPIO_TogglePin(GPIOJ, GPIO_PIN_2);
-    }
+    // if((HAL_GetTick()-counter)>1000){
+    //   counter=HAL_GetTick();
+    //   HAL_GPIO_TogglePin(GPIOI, GPIO_PIN_13);
+    //   HAL_GPIO_TogglePin(GPIOJ, GPIO_PIN_2);
+    // }
 
 //    HAL_Delay(1000);
     /* USER CODE END WHILE */
@@ -363,7 +410,9 @@ static void MX_GPIO_Init(void)
 }
 
 /* USER CODE BEGIN 4 */
-
+  FRESULT res2;
+DIR dir_test={0};
+FILINFO filinfo_test={0};
 /* USER CODE END 4 */
 
 /* USER CODE BEGIN Header_StartMemoryTask */
@@ -381,19 +430,65 @@ void StartMemoryTask(void *argument)
   /* init code for LWIP */
   MX_LWIP_Init();
   /* USER CODE BEGIN 5 */
+  uint32_t counter=0;
+  FsDataStruct input_data;
   httpd_init();
-  FS_Init();
+  //FS_Init();
   /* Infinite loop */
   for(;;)
   {
+    // if((HAL_GetTick()-counter)>500){
+    //   counter=HAL_GetTick();
+    //   //HAL_GPIO_TogglePin(GPIOI, GPIO_PIN_13);
+    //   HAL_GPIO_TogglePin(GPIOJ, GPIO_PIN_2);
+    // }
+    if(osMessageQueueGet(memoryqueueHandle, &input_data, 0, portMAX_DELAY)==osOK){
+      MMC_ProcessRequest(&input_data);
+    }
+    // osDelay(500);
+  }
+  /* USER CODE END 5 */
+}
+
+/* USER CODE BEGIN Header_StartTask02 */
+/**
+* @brief Function implementing the myTask02 thread.
+* @param argument: Not used
+* @retval None
+*/
+/* USER CODE END Header_StartTask02 */
+void StartTask02(void *argument)
+{
+  /* USER CODE BEGIN StartTask02 */
+  //thread to check if i can read sdmmc properly
+
+  FIL fsfile;
+  uint32_t counter=0;
+  //better to leave it here , it cant be in fatfs_init before scheduler
+  res2 = f_mount(&fs, path, 1); 
+  res2 = f_opendir(&dir_test, "");
+  res2 = f_readdir(&dir_test, &filinfo_test);
+  res2 = f_readdir(&dir_test, &filinfo_test);
+  res2 = f_readdir(&dir_test, &filinfo_test);
+  /* Infinite loop */
+  for(;;)
+  {
+    
+    uint32_t byte_count=0;
+    uint32_t file_size=0;
+    //f_readdir(&dir_test, &filinfo_test);
+    res2 = f_open(&fsfile, "404.html",FA_READ);
+    file_size=f_size(&fsfile);
+    res2 = f_read(&fsfile, buf, file_size, (UINT*)&byte_count);
+    res2 = f_close(&fsfile);
     if((HAL_GetTick()-counter)>500){
       counter=HAL_GetTick();
       HAL_GPIO_TogglePin(GPIOI, GPIO_PIN_13);
       HAL_GPIO_TogglePin(GPIOJ, GPIO_PIN_2);
     }
-    osDelay(1);
+    osDelay(20);
   }
-  /* USER CODE END 5 */
+  /* USER CODE END StartTask02 */
 }
 
  /* MPU Configuration */
