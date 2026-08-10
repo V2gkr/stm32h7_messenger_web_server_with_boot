@@ -25,8 +25,8 @@ extern osSemaphoreId_t sdmmc_semHandle;
 #define MMC_BOUNCE_BLOCKS   16U
 #define MMC_BOUNCE_BYTES    (MMC_BOUNCE_BLOCKS * MMC_TRANSFER_BLOCK_SIZE)
 
-static uint8_t s_bounce[MMC_BOUNCE_BYTES];
- __attribute__((section(".mmc_dma_sec"), aligned(32)));
+__attribute__(( aligned(32))) static uint8_t s_bounce[MMC_BOUNCE_BYTES];
+ 
 
 /* Set from HAL_MMC_RxCpltCallback/TxCpltCallback/ErrorCallback, which run
  * from SDMMC1_IRQn. Plain volatile flags are enough here: there is a single
