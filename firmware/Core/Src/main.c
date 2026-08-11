@@ -20,7 +20,6 @@
 #include "main.h"
 #include "cmsis_os.h"
 #include "fatfs.h"
-#include "ff.h"
 #include "lwip.h"
 #include "usb_device.h"
 
@@ -78,6 +77,18 @@ const osThreadAttr_t myTask02_attributes = {
   .stack_size = sizeof(myTask02Buffer),
   .priority = (osPriority_t) osPriorityNormal,
 };
+/* Definitions for UsbMscTask */
+osThreadId_t UsbMscTaskHandle;
+uint32_t UsbMscTaskBuffer[ 400 ];
+osStaticThreadDef_t UsbMscTaskControlBlock;
+const osThreadAttr_t UsbMscTask_attributes = {
+  .name = "UsbMscTask",
+  .cb_mem = &UsbMscTaskControlBlock,
+  .cb_size = sizeof(UsbMscTaskControlBlock),
+  .stack_mem = &UsbMscTaskBuffer[0],
+  .stack_size = sizeof(UsbMscTaskBuffer),
+  .priority = (osPriority_t) osPriorityAboveNormal,
+};
 /* Definitions for memoryqueue */
 osMessageQueueId_t memoryqueueHandle;
 uint8_t memoryqueueBuffer[ 10 * sizeof( FsDataStruct ) ];
@@ -88,6 +99,17 @@ const osMessageQueueAttr_t memoryqueue_attributes = {
   .cb_size = sizeof(memoryqueueControlBlock),
   .mq_mem = &memoryqueueBuffer,
   .mq_size = sizeof(memoryqueueBuffer)
+};
+/* Definitions for UsbEventQueue */
+osMessageQueueId_t UsbEventQueueHandle;
+uint8_t UsbEventQueueBuffer[ 16 * sizeof( UsbStageEvent ) ];
+osStaticMessageQDef_t UsbEventQueueControlBlock;
+const osMessageQueueAttr_t UsbEventQueue_attributes = {
+  .name = "UsbEventQueue",
+  .cb_mem = &UsbEventQueueControlBlock,
+  .cb_size = sizeof(UsbEventQueueControlBlock),
+  .mq_mem = &UsbEventQueueBuffer,
+  .mq_size = sizeof(UsbEventQueueBuffer)
 };
 /* Definitions for SdmmcMutex */
 osMutexId_t SdmmcMutexHandle;
@@ -107,37 +129,6 @@ const osSemaphoreAttr_t sdmmc_sem_attributes = {
 };
 /* USER CODE BEGIN PV */
 
-/* Hand-written for now - see usb_msc_task.h "Temporary hand-written status".
- * Mirrors the exact static CMSIS-RTOS2 pattern CubeMX generates for
- * memoryqueue/MemoryTask above, so that once UsbEventQueue/UsbMscTask are
- * added to the .ioc and code is regenerated, this block can just be deleted
- * in favor of the auto-generated one (same names). */
-
-/* Definitions for UsbEventQueue */
-osMessageQueueId_t UsbEventQueueHandle;
-uint8_t UsbEventQueueBuffer[ 16 * sizeof( UsbStageEvent ) ];
-osStaticMessageQDef_t UsbEventQueueControlBlock;
-const osMessageQueueAttr_t UsbEventQueue_attributes = {
-  .name = "UsbEventQueue",
-  .cb_mem = &UsbEventQueueControlBlock,
-  .cb_size = sizeof(UsbEventQueueControlBlock),
-  .mq_mem = &UsbEventQueueBuffer,
-  .mq_size = sizeof(UsbEventQueueBuffer)
-};
-
-/* Definitions for UsbMscTask */
-osThreadId_t UsbMscTaskHandle;
-uint32_t UsbMscTaskBuffer[ 400 ];
-osStaticThreadDef_t UsbMscTaskControlBlock;
-const osThreadAttr_t UsbMscTask_attributes = {
-  .name = "UsbMscTask",
-  .cb_mem = &UsbMscTaskControlBlock,
-  .cb_size = sizeof(UsbMscTaskControlBlock),
-  .stack_mem = &UsbMscTaskBuffer[0],
-  .stack_size = sizeof(UsbMscTaskBuffer),
-  .priority = (osPriority_t) osPriorityAboveNormal,
-};
-
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -147,6 +138,7 @@ static void MX_GPIO_Init(void);
 static void MX_SDMMC1_MMC_Init(void);
 void StartMemoryTask(void *argument);
 void StartTask02(void *argument);
+extern void StartUsbMscTask(void *argument);
 
 /* USER CODE BEGIN PFP */
 
@@ -215,9 +207,6 @@ int main(void)
   MX_SDMMC1_MMC_Init();
   MX_FATFS_Init();
   /* USER CODE BEGIN 2 */
-  // FATFS_LinkDriver(&USER_Driver,path);
-  // disk_initialize(0);
-  // f_mount(&fs, path, 1);
   HAL_GPIO_WritePin(GPIOI, GPIO_PIN_13,1);
   HAL_GPIO_WritePin(GPIOJ, GPIO_PIN_2,0);
   /* USER CODE END 2 */
@@ -248,10 +237,12 @@ int main(void)
   /* creation of memoryqueue */
   memoryqueueHandle = osMessageQueueNew (10, sizeof(FsDataStruct), &memoryqueue_attributes);
 
+  /* creation of UsbEventQueue */
+  UsbEventQueueHandle = osMessageQueueNew (16, sizeof(UsbStageEvent), &UsbEventQueue_attributes);
+
   /* USER CODE BEGIN RTOS_QUEUES */
   /* add queues, ... */
   /* creation of UsbEventQueue - see usb_msc_task.h */
-  UsbEventQueueHandle = osMessageQueueNew(16, sizeof(UsbStageEvent), &UsbEventQueue_attributes);
   /* USER CODE END RTOS_QUEUES */
 
   /* Create the thread(s) */
@@ -261,10 +252,12 @@ int main(void)
   /* creation of myTask02 */
   myTask02Handle = osThreadNew(StartTask02, NULL, &myTask02_attributes);
 
+  /* creation of UsbMscTask */
+  UsbMscTaskHandle = osThreadNew(StartUsbMscTask, NULL, &UsbMscTask_attributes);
+
   /* USER CODE BEGIN RTOS_THREADS */
   /* add threads, ... */
   /* creation of UsbMscTask - see usb_msc_task.h */
-  UsbMscTaskHandle = osThreadNew(StartUsbMscTask, NULL, &UsbMscTask_attributes);
   /* USER CODE END RTOS_THREADS */
 
   /* USER CODE BEGIN RTOS_EVENTS */
@@ -280,15 +273,7 @@ int main(void)
   /* USER CODE BEGIN WHILE */
   while (1)
   {
-    //tcp_client_service();
-    //MX_LWIP_Process();
-    // if((HAL_GetTick()-counter)>1000){
-    //   counter=HAL_GetTick();
-    //   HAL_GPIO_TogglePin(GPIOI, GPIO_PIN_13);
-    //   HAL_GPIO_TogglePin(GPIOJ, GPIO_PIN_2);
-    // }
 
-//    HAL_Delay(1000);
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
@@ -510,13 +495,13 @@ void StartTask02(void *argument)
   for(;;)
   {
     
-    uint32_t byte_count=0;
-    uint32_t file_size=0;
-    //f_readdir(&dir_test, &filinfo_test);
-    res2 = f_open(&fsfile, "404.html",FA_READ);
-    file_size=f_size(&fsfile);
-    res2 = f_read(&fsfile, buf, file_size, (UINT*)&byte_count);
-    res2 = f_close(&fsfile);
+    // uint32_t byte_count=0;
+    // uint32_t file_size=0;
+    // //f_readdir(&dir_test, &filinfo_test);
+    // res2 = f_open(&fsfile, "404.html",FA_READ);
+    // file_size=f_size(&fsfile);
+    // res2 = f_read(&fsfile, buf, file_size, (UINT*)&byte_count);
+    // res2 = f_close(&fsfile);
     if((HAL_GetTick()-counter)>500){
       counter=HAL_GetTick();
       HAL_GPIO_TogglePin(GPIOI, GPIO_PIN_13);
