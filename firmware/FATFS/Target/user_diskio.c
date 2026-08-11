@@ -170,13 +170,13 @@ DRESULT USER_write (
 )
 {
   /* USER CODE BEGIN WRITE */
-  //status for sdmmc operation 
+  //status for sdmmc operation
   uint32_t memory_status;
   TaskHandle_t handle=xTaskGetCurrentTaskHandle();
   //create data structure to send data to queue
   FsDataStruct fsdata={.handle=handle,.addr=sector,.buf=buff,.size=count,.operation_type=MEM_WRITE};
-  //put data in queue , timeout 10ms , check queue status in case of timeout 
-  osStatus_t queue_status=osMessageQueuePut(memoryqueueHandle, &fsdata, 0, 100);//0 -> priority is ignored in code 
+  //put data in queue , timeout matches USER_read() and MMC_ProcessRequest's own 1000ms operation timeout
+  osStatus_t queue_status=osMessageQueuePut(memoryqueueHandle, &fsdata, 0, 1000);//0 -> priority is ignored in code
   switch(queue_status){
     case osErrorTimeout:
       return RES_NOTRDY;
@@ -185,17 +185,13 @@ DRESULT USER_write (
     default:
       return RES_ERROR;
   }
-  //we get a notification about status of write operation
-  BaseType_t notification_status=xTaskNotifyWait(0, 0xFFFFFFFF, &memory_status, 10);
+  //we get a notification about status of write operation - wait long enough
+  //for MMC_ProcessRequest's own 1000ms timeout to have a chance to fire first
+  BaseType_t notification_status=xTaskNotifyWait(0, 0xFFFFFFFF, &memory_status, 1000);
   if(notification_status!=pdTRUE)
     return RES_ERROR;
-  /* See USER_read() above - DMA kick-off + wait, instead of the
-   * CPU-FIFO-polling blocking HAL_MMC_WriteBlocks(). */
-  // if (MMC_WriteBlocks(buff, sector, count, 1000U) != HAL_OK)
-  // {
-  //   return RES_ERROR;
-  // }
-  return RES_OK;
+  //return the actual result MMC_ProcessRequest notified, not an unconditional RES_OK
+  return memory_status;
   /* USER CODE END WRITE */
 }
 #endif /* _USE_WRITE == 1 */

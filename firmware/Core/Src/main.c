@@ -28,6 +28,7 @@
 /* USER CODE BEGIN Includes */
 #include "httpd.h"
 #include "mmc_transfer.h"
+#include "usb_msc_task.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -105,6 +106,37 @@ const osSemaphoreAttr_t sdmmc_sem_attributes = {
   .cb_size = sizeof(sdmmc_semControlBlock),
 };
 /* USER CODE BEGIN PV */
+
+/* Hand-written for now - see usb_msc_task.h "Temporary hand-written status".
+ * Mirrors the exact static CMSIS-RTOS2 pattern CubeMX generates for
+ * memoryqueue/MemoryTask above, so that once UsbEventQueue/UsbMscTask are
+ * added to the .ioc and code is regenerated, this block can just be deleted
+ * in favor of the auto-generated one (same names). */
+
+/* Definitions for UsbEventQueue */
+osMessageQueueId_t UsbEventQueueHandle;
+uint8_t UsbEventQueueBuffer[ 16 * sizeof( UsbStageEvent ) ];
+osStaticMessageQDef_t UsbEventQueueControlBlock;
+const osMessageQueueAttr_t UsbEventQueue_attributes = {
+  .name = "UsbEventQueue",
+  .cb_mem = &UsbEventQueueControlBlock,
+  .cb_size = sizeof(UsbEventQueueControlBlock),
+  .mq_mem = &UsbEventQueueBuffer,
+  .mq_size = sizeof(UsbEventQueueBuffer)
+};
+
+/* Definitions for UsbMscTask */
+osThreadId_t UsbMscTaskHandle;
+uint32_t UsbMscTaskBuffer[ 400 ];
+osStaticThreadDef_t UsbMscTaskControlBlock;
+const osThreadAttr_t UsbMscTask_attributes = {
+  .name = "UsbMscTask",
+  .cb_mem = &UsbMscTaskControlBlock,
+  .cb_size = sizeof(UsbMscTaskControlBlock),
+  .stack_mem = &UsbMscTaskBuffer[0],
+  .stack_size = sizeof(UsbMscTaskBuffer),
+  .priority = (osPriority_t) osPriorityAboveNormal,
+};
 
 /* USER CODE END PV */
 
@@ -218,6 +250,8 @@ int main(void)
 
   /* USER CODE BEGIN RTOS_QUEUES */
   /* add queues, ... */
+  /* creation of UsbEventQueue - see usb_msc_task.h */
+  UsbEventQueueHandle = osMessageQueueNew(16, sizeof(UsbStageEvent), &UsbEventQueue_attributes);
   /* USER CODE END RTOS_QUEUES */
 
   /* Create the thread(s) */
@@ -229,6 +263,8 @@ int main(void)
 
   /* USER CODE BEGIN RTOS_THREADS */
   /* add threads, ... */
+  /* creation of UsbMscTask - see usb_msc_task.h */
+  UsbMscTaskHandle = osThreadNew(StartUsbMscTask, NULL, &UsbMscTask_attributes);
   /* USER CODE END RTOS_THREADS */
 
   /* USER CODE BEGIN RTOS_EVENTS */

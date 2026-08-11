@@ -203,7 +203,15 @@
 #define  USE_HAL_OPAMP_REGISTER_CALLBACKS   0U /* MDIO register callback disabled    */
 #define  USE_HAL_OSPI_REGISTER_CALLBACKS    0U /* OSPI register callback disabled    */
 #define  USE_HAL_OTFDEC_REGISTER_CALLBACKS  0U /* OTFDEC register callback disabled  */
-#define  USE_HAL_PCD_REGISTER_CALLBACKS     0U /* PCD register callback disabled     */
+#define  USE_HAL_PCD_REGISTER_CALLBACKS     1U /* PCD register callback enabled - needed by
+                                                    UsbMscTask_RegisterCallbacks() (usb_msc_task.c)
+                                                    to defer USB stage dispatch into UsbMscTask.
+                                                    NOT USER-CODE-protected: when this project is
+                                                    next regenerated from the .ioc, also enable
+                                                    "Register Callback" for USB_DEVICE/PCD in
+                                                    CubeMX (Project Manager > Advanced Settings)
+                                                    so it stays 1U, or this reverts to 0U and
+                                                    usb_msc_task.c fails to build. */
 #define  USE_HAL_QSPI_REGISTER_CALLBACKS    0U /* QSPI register callback disabled    */
 #define  USE_HAL_RNG_REGISTER_CALLBACKS     0U /* RNG register callback disabled     */
 #define  USE_HAL_RTC_REGISTER_CALLBACKS     0U /* RTC register callback disabled     */

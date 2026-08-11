@@ -27,7 +27,7 @@
 #include "usbd_storage_if.h"
 
 /* USER CODE BEGIN Includes */
-
+#include "usb_msc_task.h"
 /* USER CODE END Includes */
 
 /* USER CODE BEGIN PV */
@@ -88,6 +88,14 @@ void MX_USB_DEVICE_Init(void)
   /* USER CODE BEGIN USB_DEVICE_Init_PostTreatment */
   HAL_PWREx_EnableUSBVoltageDetector();
 
+  /* Defer Setup/DataOut/DataIn stage processing into UsbMscTask instead of
+   * running the whole BOT/SCSI chain inside OTG_FS_IRQHandler - see
+   * usb_msc_task.h. Must run after USBD_Start() above has already installed
+   * the HAL default stage callbacks (via USBD_LL_Init()), so this overrides
+   * them; there's a brief window between USBD_Start() and this call where
+   * the defaults are still active, but the host can't complete enumeration
+   * fast enough for that to matter in practice. */
+  UsbMscTask_RegisterCallbacks();
   /* USER CODE END USB_DEVICE_Init_PostTreatment */
 }
 

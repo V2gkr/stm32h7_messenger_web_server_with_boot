@@ -23,6 +23,7 @@
 
 /* USER CODE BEGIN INCLUDE */
 #include "mmc_transfer.h"
+#include "diskio.h"
 /* USER CODE END INCLUDE */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -129,6 +130,7 @@ extern USBD_HandleTypeDef hUsbDeviceFS;
 
 /* USER CODE BEGIN EXPORTED_VARIABLES */
 extern MMC_HandleTypeDef hmmc1;
+extern osMessageQueueId_t memoryqueueHandle;
 /* USER CODE END EXPORTED_VARIABLES */
 
 /**
@@ -244,16 +246,25 @@ int8_t STORAGE_IsWriteProtected_FS(uint8_t lun)
 int8_t STORAGE_Read_FS(uint8_t lun, uint8_t *buf, uint32_t blk_addr, uint16_t blk_len)
 {
   /* USER CODE BEGIN 6 */
-  /* DMA (SDMMC IDMA) kick-off + wait for HAL_MMC_RxCpltCallback, instead of
-   * the CPU-FIFO-polling blocking HAL_MMC_ReadBlocks() - see mmc_transfer.h.
-   * Runs inside OTG_FS_IRQHandler; the 1s timeout is only effective because
-   * SysTick now has a higher preemption priority than OTG_FS_IRQn (see NVIC
-   * priorities in usbd_conf.c / stm32h7xx_hal_conf.h). */
-  if (MMC_ReadBlocks(buf, blk_addr, blk_len, 1000U) != HAL_OK)
+  /* Runs inside UsbMscTask (see usb_msc_task.c), not OTG_FS_IRQHandler -
+   * USBD_LL_DataOutStage()/DataInStage() are now dispatched from that task
+   * instead of directly from the USB ISR, so it's safe to submit a request
+   * to MemoryTask and block here exactly like user_diskio.c's USER_read()
+   * does. */
+  uint32_t memory_status;
+  TaskHandle_t handle = xTaskGetCurrentTaskHandle();
+  FsDataStruct fsdata = { .handle = handle, .addr = blk_addr, .buf = buf,
+                           .size = blk_len, .operation_type = MEM_READ };
+
+  if (osMessageQueuePut(memoryqueueHandle, &fsdata, 0, 1000) != osOK)
   {
     return USBD_FAIL;
   }
-  return (USBD_OK);
+  if (xTaskNotifyWait(0, 0xFFFFFFFF, &memory_status, 1000) != pdTRUE)
+  {
+    return USBD_FAIL;
+  }
+  return (memory_status == RES_OK) ? USBD_OK : USBD_FAIL;
   /* USER CODE END 6 */
 }
 
@@ -268,13 +279,22 @@ int8_t STORAGE_Read_FS(uint8_t lun, uint8_t *buf, uint32_t blk_addr, uint16_t bl
 int8_t STORAGE_Write_FS(uint8_t lun, uint8_t *buf, uint32_t blk_addr, uint16_t blk_len)
 {
   /* USER CODE BEGIN 7 */
-  /* See STORAGE_Read_FS() above - DMA kick-off + wait, instead of the
-   * CPU-FIFO-polling blocking HAL_MMC_WriteBlocks(). */
-  if (MMC_WriteBlocks(buf, blk_addr, blk_len, 1000U) != HAL_OK)
+  /* See STORAGE_Read_FS() above - submits to MemoryTask via memoryqueueHandle
+   * and blocks, instead of calling MMC_WriteBlocks() directly. */
+  uint32_t memory_status;
+  TaskHandle_t handle = xTaskGetCurrentTaskHandle();
+  FsDataStruct fsdata = { .handle = handle, .addr = blk_addr, .buf = buf,
+                           .size = blk_len, .operation_type = MEM_WRITE };
+
+  if (osMessageQueuePut(memoryqueueHandle, &fsdata, 0, 1000) != osOK)
   {
     return USBD_FAIL;
   }
-  return (USBD_OK);
+  if (xTaskNotifyWait(0, 0xFFFFFFFF, &memory_status, 1000) != pdTRUE)
+  {
+    return USBD_FAIL;
+  }
+  return (memory_status == RES_OK) ? USBD_OK : USBD_FAIL;
   /* USER CODE END 7 */
 }
 
