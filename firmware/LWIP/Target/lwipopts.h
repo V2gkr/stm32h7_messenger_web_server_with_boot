@@ -51,6 +51,14 @@
 #define ETH_RX_BUFFER_SIZE 1536
 /*----- Value in opt.h for MEM_ALIGNMENT: 1 -----*/
 #define MEM_ALIGNMENT 4
+/*----- Value in opt.h for MEM_SIZE: 1600. Bumped for fsdata.c's custom
+ * FatFs-backed HTTPD files (fs_open_custom/fs_read_custom), which now
+ * mem_malloc() a per-connection FIL from this heap. LWIP_RAM_HEAP_POINTER
+ * below fixes this heap at 0x30004000 in RAM_D2 with NO linker-enforced
+ * bound - the next fixed placement after it is .mmc_dma_sec at 0x30008000
+ * (STM32H750XX_FLASH.ld), which caps this heap at 16KB (0x4000) total.
+ * Keep MEM_SIZE comfortably under that ceiling. -----*/
+#define MEM_SIZE 8192
 /*----- Default Value for H7 devices: 0x30004000 -----*/
 #define LWIP_RAM_HEAP_POINTER 0x30004000
 /*----- Value supported for H7 devices: 1 -----*/

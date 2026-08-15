@@ -431,9 +431,7 @@ static void MX_GPIO_Init(void)
 }
 
 /* USER CODE BEGIN 4 */
-  FRESULT res2;
-DIR dir_test={0};
-FILINFO filinfo_test={0};
+FRESULT res2;
 /* USER CODE END 4 */
 
 /* USER CODE BEGIN Header_StartMemoryTask */
@@ -451,20 +449,14 @@ void StartMemoryTask(void *argument)
   /* init code for LWIP */
   MX_LWIP_Init();
   /* USER CODE BEGIN 5 */
-  uint32_t counter=0;
   FsDataStruct input_data;
   httpd_init();
-  //FS_Init();
   /* Infinite loop */
   for(;;)
   {
-    // if((HAL_GetTick()-counter)>500){
-    //   counter=HAL_GetTick();
-    //   //HAL_GPIO_TogglePin(GPIOI, GPIO_PIN_13);
-    //   HAL_GPIO_TogglePin(GPIOJ, GPIO_PIN_2);
-    // }
     if(osMessageQueueGet(memoryqueueHandle, &input_data, 0, portMAX_DELAY)==osOK){
       MMC_ProcessRequest(&input_data);
+      HAL_GPIO_TogglePin(GPIOI, GPIO_PIN_13);
     }
     // osDelay(500);
   }
@@ -483,28 +475,15 @@ void StartTask02(void *argument)
   /* USER CODE BEGIN StartTask02 */
   //thread to check if i can read sdmmc properly
 
-  FIL fsfile;
   uint32_t counter=0;
   //better to leave it here , it cant be in fatfs_init before scheduler
   res2 = f_mount(&fs, path, 1); 
-  // res2 = f_opendir(&dir_test, "");
-  // res2 = f_readdir(&dir_test, &filinfo_test);
-  // res2 = f_readdir(&dir_test, &filinfo_test);
-  // res2 = f_readdir(&dir_test, &filinfo_test);
   /* Infinite loop */
   for(;;)
   {
-    
-    // uint32_t byte_count=0;
-    // uint32_t file_size=0;
-    // //f_readdir(&dir_test, &filinfo_test);
-    // res2 = f_open(&fsfile, "index.html",FA_READ);
-    // file_size=f_size(&fsfile);
-    // res2 = f_read(&fsfile, buf, file_size, (UINT*)&byte_count);
-    // res2 = f_close(&fsfile);
     if((HAL_GetTick()-counter)>500){
       counter=HAL_GetTick();
-      HAL_GPIO_TogglePin(GPIOI, GPIO_PIN_13);
+      
       HAL_GPIO_TogglePin(GPIOJ, GPIO_PIN_2);
     }
     osDelay(20);
