@@ -209,6 +209,12 @@ int main(void)
   /* USER CODE BEGIN 2 */
   HAL_GPIO_WritePin(GPIOI, GPIO_PIN_13,1);
   HAL_GPIO_WritePin(GPIOJ, GPIO_PIN_2,0);
+
+  /* LWIP/httpd init (was in StartMemoryTask, called after osKernelStart() -
+   * moved here, before the scheduler starts, so netif_add()/httpd_init()'s
+   * raw lwIP API calls can't race tcpip_thread or the EthIf RX task, which
+   * don't exist yet at this point. See lwip.c's MX_LWIP_Init(). */
+  MX_LWIP_Init();
   /* USER CODE END 2 */
 
   /* Init scheduler */
@@ -445,12 +451,10 @@ void StartMemoryTask(void *argument)
 {
   /* init code for USB_DEVICE */
   MX_USB_DEVICE_Init();
-
-  /* init code for LWIP */
-  MX_LWIP_Init();
   /* USER CODE BEGIN 5 */
+  /* LWIP/httpd init moved to main() (USER CODE BEGIN 2), before
+   * osKernelStart() - see lwip.c's MX_LWIP_Init() for why. */
   FsDataStruct input_data;
-  httpd_init();
   /* Infinite loop */
   for(;;)
   {

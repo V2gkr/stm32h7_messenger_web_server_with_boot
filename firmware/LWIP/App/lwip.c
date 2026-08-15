@@ -29,7 +29,7 @@
 #include <string.h>
 
 /* USER CODE BEGIN 0 */
-
+#include "httpd.h"
 /* USER CODE END 0 */
 /* Private function prototypes -----------------------------------------------*/
 static void ethernet_link_status_updated(struct netif *netif);
@@ -109,7 +109,17 @@ void MX_LWIP_Init(void)
 /* USER CODE END H7_OS_THREAD_NEW_CMSIS_RTOS_V2 */
 
 /* USER CODE BEGIN 3 */
-
+  /* httpd_init() used to live in StartMemoryTask (an unrelated SD-card
+   * queue-processing task), called well after the scheduler was already
+   * running - a foreign, racy home for lwIP raw API (tcp_new/tcp_bind/
+   * tcp_listen touch global PCB lists tcpip_thread also owns). Called here
+   * instead, inside MX_LWIP_Init() itself: whoever calls MX_LWIP_Init()
+   * still isn't tcpip_thread, but at minimum httpd setup now travels with
+   * the rest of the LwIP bring-up instead of being a separate, easy-to-miss
+   * step bolted onto an unrelated task. See main.c: this is now called from
+   * main() before osKernelStart(), where the race is moot - nothing else
+   * runs yet. */
+  httpd_init();
 /* USER CODE END 3 */
 }
 

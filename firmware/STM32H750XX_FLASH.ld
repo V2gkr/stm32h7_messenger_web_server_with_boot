@@ -204,6 +204,33 @@ SECTIONS
     *(.Rx_PoolSection)
   } >RAM_D2
 
+  /* lwIP raw-heap anchor (mem_malloc/mem_free; MEM_SIZE and
+   * LWIP_RAM_HEAP_POINTER in lwipopts.h). This used to be the hand-picked
+   * constant 0x30004000, which silently overlapped the tail of .lwip_sec
+   * above: with ETH_RX_BUFFER_CNT=12 * ETH_RX_BUFFER_SIZE=1536 (plus
+   * pbuf_custom overhead), .lwip_sec actually runs 0x30000000-0x30004a83
+   * (confirmed via the .map file) - about 2.6KB past 0x30004000. Every
+   * mem_malloc()/mem_free() (httpd TX buffers, fsdata.c's per-connection
+   * FIL) was therefore scribbling over live Ethernet RX DMA buffers,
+   * surfacing as intermittent HardFaults in ethernet_input() reading a
+   * corrupted pbuf - worse under load since more heap churn means more
+   * chances to hit the overlapping RX buffer slots.
+   *
+   * Placed by the linker right after .lwip_sec instead, so it can't
+   * silently regress the same way again if ETH_RX_BUFFER_CNT/SIZE ever
+   * changes - the ASSERT below turns a future collision with .mmc_dma_sec
+   * into a build error instead of silent RAM corruption. Reserves 12KB,
+   * comfortably above MEM_SIZE (8192B) plus mem.c's ~24B bookkeeping
+   * overhead; keep MEM_SIZE under that. */
+  .lwip_heap_sec (NOLOAD) : {
+    . = ALIGN(32);
+    PROVIDE(_lwip_heap_start = .);
+    . = . + 12K;
+    PROVIDE(_lwip_heap_end = .);
+  } >RAM_D2
+
+  ASSERT(_lwip_heap_end <= 0x30008000, "lwIP heap (.lwip_heap_sec) overlaps .mmc_dma_sec (USB MSC bot_data) at 0x30008000 - shrink MEM_SIZE/ETH_RX_BUFFER_CNT or move .mmc_dma_sec")
+
   /* Non-cacheable home of the USB MSC BOT handle (USBD_static_malloc() in
    * USB_DEVICE/Target/usbd_conf.c), which embeds the bot_data[] transfer
    * buffer. Anchored well past the lwIP Ethernet descriptors/RX pool above

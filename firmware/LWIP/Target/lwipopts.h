@@ -51,14 +51,6 @@
 #define ETH_RX_BUFFER_SIZE 1536
 /*----- Value in opt.h for MEM_ALIGNMENT: 1 -----*/
 #define MEM_ALIGNMENT 4
-/*----- Value in opt.h for MEM_SIZE: 1600. Bumped for fsdata.c's custom
- * FatFs-backed HTTPD files (fs_open_custom/fs_read_custom), which now
- * mem_malloc() a per-connection FIL from this heap. LWIP_RAM_HEAP_POINTER
- * below fixes this heap at 0x30004000 in RAM_D2 with NO linker-enforced
- * bound - the next fixed placement after it is .mmc_dma_sec at 0x30008000
- * (STM32H750XX_FLASH.ld), which caps this heap at 16KB (0x4000) total.
- * Keep MEM_SIZE comfortably under that ceiling. -----*/
-#define MEM_SIZE 8192
 /*----- Default Value for H7 devices: 0x30004000 -----*/
 #define LWIP_RAM_HEAP_POINTER 0x30004000
 /*----- Value supported for H7 devices: 1 -----*/
@@ -125,6 +117,18 @@
 #define CHECKSUM_CHECK_ICMP6 0
 /*-----------------------------------------------------------------------------*/
 /* USER CODE BEGIN 1 */
+
+/* LWIP_RAM_HEAP_POINTER above is CubeMX's hard-coded default for H7
+ * (0x30004000) and gets silently regenerated back to that on every
+ * "Generate Code" - it's not a project-configurable .ioc parameter. That
+ * fixed address overlaps the tail of .lwip_sec (Ethernet RX pool,
+ * STM32H750XX_FLASH.ld) by ~2.6KB, causing intermittent HardFaults in
+ * ethernet_input() from corrupted RX pbufs. Override it here with the
+ * linker-provided, collision-checked symbol instead - this block survives
+ * regeneration, so re-generating LWIP middleware code will NOT undo this. */
+extern char _lwip_heap_start;
+#undef LWIP_RAM_HEAP_POINTER
+#define LWIP_RAM_HEAP_POINTER (&_lwip_heap_start)
 
 /* USER CODE END 1 */
 
