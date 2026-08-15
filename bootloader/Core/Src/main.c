@@ -117,25 +117,25 @@ int main(void)
   {
     Error_Handler();
   }
-  FATFS_LinkDriver(&USER_Driver,path);
-  disk_initialize(0);
-  if(f_mount(&fs, path, 1)!=FR_OK){
-    Error_Handler();
-  }
-  FIL file;
-  UINT bytes_read;
-  uint8_t buffer[512];
-  FRESULT open_result=f_open(&file,UPDATE_DIRECTORY,FA_READ);
-  if(open_result!=FR_OK){
-    Error_Handler();
-  }
-  //uint8_t size_count=0;
-  CSP_QSPI_EraseBlock(SECOND_BANK_ADDR&~0x90000000,QSPI_ERASE_128K);
-  for(uint8_t i=0;i<112;i++){
-    f_read(&file,buffer,sizeof(buffer),&bytes_read);
-    CSP_QSPI_WriteMemory(buffer, (SECOND_BANK_ADDR+(i*512))&~0x90000000, 512);
-  }
-  f_mount(NULL, path, 1);
+  // FATFS_LinkDriver(&USER_Driver,path);
+  // disk_initialize(0);
+  // if(f_mount(&fs, path, 1)!=FR_OK){
+  //   Error_Handler();
+  // }
+  // FIL file;
+  // UINT bytes_read;
+  // uint8_t buffer[512];
+  // FRESULT open_result=f_open(&file,UPDATE_DIRECTORY,FA_READ);
+  // if(open_result!=FR_OK){
+  //   Error_Handler();
+  // }
+  // //uint8_t size_count=0;
+  // CSP_QSPI_EraseBlock(SECOND_BANK_ADDR&~0x90000000,QSPI_ERASE_128K);
+  // for(uint8_t i=0;i<112;i++){
+  //   f_read(&file,buffer,sizeof(buffer),&bytes_read);
+  //   CSP_QSPI_WriteMemory(buffer, (SECOND_BANK_ADDR+(i*512))&~0x90000000, 512);
+  // }
+  // f_mount(NULL, path, 1);
   BootSwitchToExtFlash();
   /* USER CODE END 2 */
 
