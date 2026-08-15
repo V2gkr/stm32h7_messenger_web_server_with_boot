@@ -13,9 +13,19 @@
 extern MMC_HandleTypeDef hmmc1;
 extern osSemaphoreId_t sdmmc_semHandle;
 /* DMA bounce buffer: 16 blocks (8 KB) transferred per HAL_MMC_*Blocks_DMA
- * call. Placed in .mmc_dma_sec (STM32H750XX_FLASH.ld), inside the
- * non-cacheable MPU region set up in MPU_Config() (main.c) - so it is never
- * cached and needs no manual Clean/InvalidateDCache_by_Addr() calls at all.
+ * call. Placed in .mmc_bounce_sec (STM32H750XX_FLASH.ld), which pins it to
+ * 0x24000000 in RAM_D1 (AXI SRAM) - exactly the 8KB covered by the
+ * non-cacheable MPU region 3 set up in MPU_Config() (main.c). Because it is
+ * never cached, the code below needs no manual Clean/InvalidateDCache_by_Addr()
+ * around the transfers. Sizing the section and the MPU region identically is
+ * load-bearing: any part of this buffer left outside the region would be
+ * cacheable again, and the resulting incoherence between the D-cache and
+ * IDMA is silent data corruption, not an error.
+ *
+ * RAM_D1 rather than RAM_D2 is deliberate - SDMMC1's IDMA contends with the
+ * Ethernet DMA on the AHB matrix when this buffer lives in RAM_D2, which
+ * surfaced as SDMMC RX_OVERRUN errors.
+ *
  * Both the USB MSC path (usbd_storage_if.c, via UsbMscTask) and the FatFs
  * path (user_diskio.c) funnel through MemoryTask/memoryqueueHandle, so there
  * is only ever one caller of this buffer at a time - see mmc_transfer.h.
@@ -26,8 +36,9 @@ extern osSemaphoreId_t sdmmc_semHandle;
 #define MMC_BOUNCE_BLOCKS   16U
 #define MMC_BOUNCE_BYTES    (MMC_BOUNCE_BLOCKS * MMC_TRANSFER_BLOCK_SIZE)
 
-__attribute__(( aligned(32))) static uint8_t s_bounce[MMC_BOUNCE_BYTES];
- 
+__attribute__((section(".mmc_bounce_sec"), aligned(32)))
+static uint8_t s_bounce[MMC_BOUNCE_BYTES];
+
 
 /* Set from HAL_MMC_RxCpltCallback/TxCpltCallback/ErrorCallback, which run
  * from SDMMC1_IRQn. A plain volatile flag is enough here: MemoryTask is the
@@ -116,10 +127,9 @@ HAL_StatusTypeDef MMC_ReadBlocks(uint8_t *buf, uint32_t blk_addr, uint32_t blk_l
       status=HAL_ERROR;
       break;
     }
-    /* s_bounce lives in non-cacheable memory (.mmc_dma_sec) - no
+    /* s_bounce lives in non-cacheable memory (.mmc_bounce_sec) - no
      * SCB_InvalidateDCache_by_Addr() needed, IDMA's writes are already
      * visible to the CPU. */
-    SCB_InvalidateDCache_by_Addr(s_bounce,sizeof(s_bounce));
     memcpy(dst, s_bounce, chunk * MMC_TRANSFER_BLOCK_SIZE);
 
     dst      += chunk * MMC_TRANSFER_BLOCK_SIZE;
@@ -141,9 +151,9 @@ HAL_StatusTypeDef MMC_WriteBlocks(const uint8_t *buf, uint32_t blk_addr, uint32_
   {
     uint32_t chunk = (remaining > MMC_BOUNCE_BLOCKS) ? MMC_BOUNCE_BLOCKS : remaining;
 
-    /* s_bounce lives in non-cacheable memory - no SCB_CleanDCache_by_Addr()
-     * needed, IDMA will read exactly what memcpy() just wrote. */
-     SCB_CleanDCache_by_Addr((uint32_t*)s_bounce,sizeof(s_bounce));
+    /* s_bounce lives in non-cacheable memory (.mmc_bounce_sec) - no
+     * SCB_CleanDCache_by_Addr() needed after this memcpy(), IDMA will read
+     * exactly what was just written. */
     memcpy(s_bounce, src, chunk * MMC_TRANSFER_BLOCK_SIZE);
 
     s_xferError = 0U;

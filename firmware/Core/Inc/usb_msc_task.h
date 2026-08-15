@@ -42,6 +42,68 @@
   * directly from OTG_FS_IRQHandler, unchanged) - USBD_MSC's
   * USBD_ClassTypeDef.SOF is NULL, so there is nothing to defer.
   *
+  * Buffer-pointer staleness hazard (found the hard way, second bug behind
+  * the same symptom as below): the original synchronous HAL_PCD_DataOutStage/
+  * DataInStageCallback read hpcd->OUT_ep[epnum].xfer_buff /
+  * IN_ep[epnum].xfer_buff and passed it to USBD_LL_DataOutStage/DataInStage
+  * in the very same ISR call - the read and the use happened atomically. Once
+  * that dispatch is deferred to UsbMscTask, there's a real (usually short,
+  * but nonzero) delay between the event being queued and UsbMscTask getting
+  * to it - and the BOT protocol re-arms the same endpoint for its next stage
+  * (CBW -> data -> CSW) in rapid succession, so hpcd->OUT_ep[epnum].xfer_buff/
+  * IN_ep[epnum].xfer_buff can already point somewhere else by the time
+  * UsbMscTask would read it. Fix: MSC_PCD_DataOutStageCallback/
+  * DataInStageCallback capture the pointer synchronously in the ISR (like the
+  * original code did) and store it *in* the UsbStageEvent - UsbMscTask uses
+  * the stored pointer, never re-reads hpcd->{OUT,IN}_ep[].xfer_buff itself.
+  *
+  * PCD register concurrency hazard (found the hard way, third bug behind the
+  * same symptom - device enumerates, INQUIRY/READ CAPACITY succeed, but the
+  * host resets the port a second or two after the first Read(10), no
+  * filesystem ever found): in the original synchronous design, *all* PCD
+  * hardware access - both HAL_PCD_IRQHandler's own low-level FIFO/register
+  * handling and everything USBD_LL_*Stage()/USBD_LL_Transmit()/
+  * PrepareReceive() (deep inside MSC_BOT/SCSI) do - happened inside
+  * OTG_FS_IRQHandler, i.e. strictly serialized by construction. Once stage
+  * dispatch moves to UsbMscTask, USBD_LL_Transmit()/PrepareReceive() (called
+  * from deep inside SCSI_ProcessRead/ProcessWrite/MSC_BOT_SendCSW while
+  * UsbMscTask runs USBD_LL_DataOutStage/DataInStage) now touch
+  * HAL_PCD_EP_Transmit()/Receive() - and the shared OTG_FS peripheral
+  * registers they write (e.g. the RX FIFO handling machinery
+  * HAL_PCD_IRQHandler itself relies on) - from *task* context, while
+  * OTG_FS_IRQHandler (a real, higher-priority interrupt) can still preempt
+  * UsbMscTask at any point and touch the same registers concurrently. Fix:
+  * StartUsbMscTask() brackets each USBD_LL_*Stage() dispatch with
+  * HAL_NVIC_DisableIRQ(OTG_FS_IRQn)/EnableIRQ() - targeted at that one IRQ
+  * line only, never __disable_irq(), so SDMMC1_IRQn stays live throughout
+  * (MemoryTask's DMA-completion semaphore wait, inside the very same
+  * dispatch when it blocks on STORAGE_Read_FS/Write_FS, depends on it).
+  * OTG_FS interrupts that arrive while masked aren't lost - NVIC latches
+  * them pending and they fire as soon as the IRQ is re-enabled - just
+  * delayed for the (usually short, occasionally up to ~1s if the dispatch is
+  * mid SD-card wait) duration of one dispatch.
+  *
+  * Stale-event hazard after a USB bus reset (found the hard way - MSC
+  * enumerated and answered INQUIRY/READ CAPACITY, but never showed a
+  * filesystem and the host kept resetting the port): a USB reset can arrive
+  * and be handled while UsbEventQueueHandle still holds Setup/DataOut/DataIn
+  * events queued *before* the reset. HAL_PCD_ResetCallback (usbd_conf.c)
+  * runs synchronously in the ISR - it isn't deferred, since it never touches
+  * the SD card - but USBD_LL_Reset()/SetSpeed() it calls do reset the BOT/
+  * SCSI state machine and endpoint bookkeeping immediately. If UsbMscTask
+  * later dequeues and dispatches one of those pre-reset events, it's now
+  * operating on stale epnum/buffer state from a session that no longer
+  * exists, which desyncs the BOT protocol. osMessageQueueReset() can't be
+  * called from the ISR to purge the backlog (CMSIS-RTOS2 rejects it from
+  * IS_IRQ() context), so instead: MSC_PCD_ResetCallback() (usb_msc_task.c)
+  * increments a plain volatile epoch counter (safe from ISR - just a
+  * variable write); every UsbStageEvent is stamped with the epoch at enqueue
+  * time; UsbMscTask discards (does not dispatch) any event whose stamped
+  * epoch doesn't match the current epoch when it's dequeued. Not handled the
+  * same way: Suspend/Resume/Connect/Disconnect - only Reset was observed to
+  * trigger this, and those are rarer/lower-stakes, but the same hazard could
+  * in principle apply to them too if it ever comes up.
+  *
   * Requires USE_HAL_PCD_REGISTER_CALLBACKS == 1 (Core/Inc/stm32h7xx_hal_conf.h)
   * - hand-flipped to 1U there for now since it isn't USER-CODE-protected;
   * when regenerating from the .ioc, also enable "Register Callback" for
@@ -82,10 +144,21 @@ typedef enum {
 typedef struct {
   UsbStageType stage;
   uint8_t      epnum;          /* unused for USB_STAGE_SETUP */
+  uint8_t     *pdata;          /* valid only for USB_STAGE_DATA_OUT/DATA_IN -
+                                   hpcd->OUT_ep[epnum].xfer_buff /
+                                   IN_ep[epnum].xfer_buff, captured in the ISR
+                                   at enqueue time (see "Buffer-pointer
+                                   staleness hazard" above) - NOT re-read
+                                   later at dispatch time. */
   uint8_t      setup_data[8];  /* valid only for USB_STAGE_SETUP - copied out
                                    of hpcd->Setup, which HAL reuses for the
                                    next SETUP packet, so it can't just be
                                    referenced by pointer here. */
+  uint32_t     epoch;          /* stamped with the current USB-reset epoch at
+                                   enqueue time; UsbMscTask discards the event
+                                   instead of dispatching it if this doesn't
+                                   match anymore - see "Stale-event hazard"
+                                   above. */
 } UsbStageEvent;
 
 /**

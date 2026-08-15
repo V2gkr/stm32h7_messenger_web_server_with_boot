@@ -21,7 +21,8 @@
   *
   * Bounce buffer, not cache-maintenance-by-address: DMA always transfers
   * into/out of a fixed, non-cacheable static buffer owned by mmc_transfer.c
-  * (see .mmc_dma_sec in STM32H750XX_FLASH.ld / MPU_Config() in main.c), and
+  * (see .mmc_bounce_sec in STM32H750XX_FLASH.ld, pinned to 0x24000000 in
+  * RAM_D1 and covered by MPU region 3 in MPU_Config() in main.c), and
   * the caller's buffer is only ever touched by the CPU via memcpy(). We do
   * NOT run SCB_Clean/InvalidateDCache_by_Addr() on the caller's buffer,
   * because on the FatFs/httpd path that buffer is `hs->buf` - allocated by

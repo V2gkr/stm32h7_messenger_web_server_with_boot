@@ -122,6 +122,26 @@ SECTIONS
     PROVIDE_HIDDEN (__fini_array_end = .);
   } >FLASH
 
+  /* Non-cacheable DMA bounce buffer for eMMC (SDMMC1 IDMA) transfers - see
+   * mmc_transfer.c. Pinned to the very start of RAM_D1 (AXI SRAM) because
+   * MPU region 3 (MPU_Config() in main.c, mirrored in the .ioc) marks exactly
+   * 0x24000000..0x24001FFF as non-cacheable, and an ARMv7-M MPU region must be
+   * aligned to its own size - 0x24000000 is the only 8KB-aligned spot that
+   * doesn't strand usable RAM. RAM_D1 (not RAM_D2 like .mmc_dma_sec below) is
+   * deliberate: SDMMC1's IDMA contends with the Ethernet DMA on the AHB
+   * matrix when its buffer sits in RAM_D2, which showed up as SDMMC
+   * RX_OVERRUN errors.
+   *
+   * Declared before .data/.bss so those start at 0x24002000 instead; the
+   * trailing ABSOLUTE() below reserves the full 8KB, so if .mmc_bounce_sec
+   * ever outgrows the MPU region the link fails ("cannot move location counter
+   * backwards") rather than silently leaving part of the buffer cacheable. */
+  .mmc_bounce_sec (NOLOAD) : {
+    . = ABSOLUTE(0x24000000);
+    *(.mmc_bounce_sec)
+    . = ABSOLUTE(0x24002000);
+  } >RAM_D1
+
   /* used by the startup to initialize data */
   _sidata = LOADADDR(.data);
 
@@ -184,10 +204,16 @@ SECTIONS
     *(.Rx_PoolSection)
   } >RAM_D2
 
-  /* Non-cacheable DMA buffers for eMMC (SDMMC1 IDMA) transfers - see
-   * mmc_transfer.c / MPU_Config() in main.c. Anchored well past the
-   * lwIP Ethernet descriptors/RX pool above (0x30000000-~0x30005000) and
-   * inside the non-cacheable MPU region (0x30004000, 64KB). */
+  /* Non-cacheable home of the USB MSC BOT handle (USBD_static_malloc() in
+   * USB_DEVICE/Target/usbd_conf.c), which embeds the bot_data[] transfer
+   * buffer. Anchored well past the lwIP Ethernet descriptors/RX pool above
+   * (0x30000000-~0x30005000) and inside the non-cacheable MPU region 2
+   * (0x30004000, 64KB - see MPU_Config() in main.c).
+   *
+   * Note: no DMA engine reaches bot_data[] anymore - mmc_transfer.c memcpy()s
+   * between it and .mmc_bounce_sec above, and only that bounce buffer is
+   * handed to HAL_MMC_*Blocks_DMA(). Keeping this section non-cacheable is
+   * therefore no longer strictly required, just harmless. */
   .mmc_dma_sec (NOLOAD) : {
     . = ABSOLUTE(0x30008000);
     *(.mmc_dma_sec)

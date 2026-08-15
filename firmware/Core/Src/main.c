@@ -487,10 +487,10 @@ void StartTask02(void *argument)
   uint32_t counter=0;
   //better to leave it here , it cant be in fatfs_init before scheduler
   res2 = f_mount(&fs, path, 1); 
-  res2 = f_opendir(&dir_test, "");
-  res2 = f_readdir(&dir_test, &filinfo_test);
-  res2 = f_readdir(&dir_test, &filinfo_test);
-  res2 = f_readdir(&dir_test, &filinfo_test);
+  // res2 = f_opendir(&dir_test, "");
+  // res2 = f_readdir(&dir_test, &filinfo_test);
+  // res2 = f_readdir(&dir_test, &filinfo_test);
+  // res2 = f_readdir(&dir_test, &filinfo_test);
   /* Infinite loop */
   for(;;)
   {
@@ -498,7 +498,7 @@ void StartTask02(void *argument)
     // uint32_t byte_count=0;
     // uint32_t file_size=0;
     // //f_readdir(&dir_test, &filinfo_test);
-    // res2 = f_open(&fsfile, "404.html",FA_READ);
+    // res2 = f_open(&fsfile, "index.html",FA_READ);
     // file_size=f_size(&fsfile);
     // res2 = f_read(&fsfile, buf, file_size, (UINT*)&byte_count);
     // res2 = f_close(&fsfile);
@@ -555,6 +555,14 @@ void MPU_Config(void)
   MPU_InitStruct.IsShareable = MPU_ACCESS_SHAREABLE;
   MPU_InitStruct.IsCacheable = MPU_ACCESS_NOT_CACHEABLE;
   MPU_InitStruct.IsBufferable = MPU_ACCESS_NOT_BUFFERABLE;
+
+  HAL_MPU_ConfigRegion(&MPU_InitStruct);
+
+  /** Initializes and configures the Region and the memory to be protected
+  */
+  MPU_InitStruct.Number = MPU_REGION_NUMBER3;
+  MPU_InitStruct.BaseAddress = 0x24000000;
+  MPU_InitStruct.Size = MPU_REGION_SIZE_8KB;
 
   HAL_MPU_ConfigRegion(&MPU_InitStruct);
   /* Enables the MPU */
