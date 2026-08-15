@@ -59,3 +59,10 @@ in VS Code - it's a multi-root workspace with `bootloader/` and
 `firmware/` as separate roots, each keeping its own CMake Tools
 configuration (`.vscode/settings.json` per project). Switch the active
 CMake project via the CMake Tools status bar / project picker.
+
+## Hardware/firmware lessons learned
+
+[`docs/hardware-lessons-learned.md`](docs/hardware-lessons-learned.md) -
+the non-obvious RAM-domain, cache, DMA-concurrency, and CubeMX-generation
+bugs this project has hit so far, with root causes and fixes. Worth
+skimming before touching SDMMC, USB MSC, or LwIP/httpd code.
