@@ -17,9 +17,8 @@ this codebase's boilerplate, and it does not know about any of these fixes).
 **Symptom:** SDMMC RX_OVERRUN errors under load.
 
 **Root cause:** The SDMMC1 IDMA transfer buffer lived in `RAM_D2` (AHB SRAM),
-the same domain the Ethernet DMA descriptors/buffers use. Under concurrent
-traffic the two DMA masters contended for AHB matrix bandwidth to the same
-memory domain, and SDMMC lost the race often enough to overrun its FIFO.
+the same domain the Ethernet DMA descriptors/buffers use because of same MPU config .
+In IDMA mode there is no connection between sdmmc1 and RAM_D2
 
 **Fix:** Moved the SDMMC bounce buffer to `RAM_D1` (AXI SRAM,
 `0x24000000`), a separate bus domain from Ethernet's `RAM_D2` traffic.
