@@ -20,11 +20,11 @@
 #include "main.h"
 #include "cmsis_os.h"
 #include "fatfs.h"
-#include "lwip.h"
 #include "usb_device.h"
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
+#include "lwip.h"
 #include "httpd.h"
 #include "mmc_transfer.h"
 #include "usb_msc_task.h"
@@ -53,6 +53,9 @@ typedef StaticSemaphore_t osStaticSemaphoreDef_t;
 
 MMC_HandleTypeDef hmmc1;
 
+UART_HandleTypeDef huart3;
+DMA_HandleTypeDef hdma_usart3_tx;
+
 /* Definitions for MemoryTask */
 osThreadId_t MemoryTaskHandle;
 uint32_t MemoryTaskBuffer[ 400 ];
@@ -65,16 +68,16 @@ const osThreadAttr_t MemoryTask_attributes = {
   .stack_size = sizeof(MemoryTaskBuffer),
   .priority = (osPriority_t) osPriorityHigh,
 };
-/* Definitions for myTask02 */
-osThreadId_t myTask02Handle;
-uint32_t myTask02Buffer[ 400 ];
-osStaticThreadDef_t myTask02ControlBlock;
-const osThreadAttr_t myTask02_attributes = {
-  .name = "myTask02",
-  .cb_mem = &myTask02ControlBlock,
-  .cb_size = sizeof(myTask02ControlBlock),
-  .stack_mem = &myTask02Buffer[0],
-  .stack_size = sizeof(myTask02Buffer),
+/* Definitions for UartTask */
+osThreadId_t UartTaskHandle;
+uint32_t UartTaskBuffer[ 400 ];
+osStaticThreadDef_t UartTaskControlBlock;
+const osThreadAttr_t UartTask_attributes = {
+  .name = "UartTask",
+  .cb_mem = &UartTaskControlBlock,
+  .cb_size = sizeof(UartTaskControlBlock),
+  .stack_mem = &UartTaskBuffer[0],
+  .stack_size = sizeof(UartTaskBuffer),
   .priority = (osPriority_t) osPriorityNormal,
 };
 /* Definitions for UsbMscTask */
@@ -111,6 +114,17 @@ const osMessageQueueAttr_t UsbEventQueue_attributes = {
   .mq_mem = &UsbEventQueueBuffer,
   .mq_size = sizeof(UsbEventQueueBuffer)
 };
+/* Definitions for UartMessageQueue */
+osMessageQueueId_t UartMessageQueueHandle;
+uint8_t UartMessageQueueBuffer[ 10 * 128 ];
+osStaticMessageQDef_t UartMessageQueueControlBlock;
+const osMessageQueueAttr_t UartMessageQueue_attributes = {
+  .name = "UartMessageQueue",
+  .cb_mem = &UartMessageQueueControlBlock,
+  .cb_size = sizeof(UartMessageQueueControlBlock),
+  .mq_mem = &UartMessageQueueBuffer,
+  .mq_size = sizeof(UartMessageQueueBuffer)
+};
 /* Definitions for SdmmcMutex */
 osMutexId_t SdmmcMutexHandle;
 osStaticMutexDef_t SdmmcMutexControlBlock;
@@ -133,11 +147,14 @@ const osSemaphoreAttr_t sdmmc_sem_attributes = {
 
 /* Private function prototypes -----------------------------------------------*/
 void SystemClock_Config(void);
+void PeriphCommonClock_Config(void);
 static void MPU_Config(void);
 static void MX_GPIO_Init(void);
+static void MX_DMA_Init(void);
 static void MX_SDMMC1_MMC_Init(void);
+static void MX_USART3_UART_Init(void);
 void StartMemoryTask(void *argument);
-void StartTask02(void *argument);
+void StartUartTask(void *argument);
 extern void StartUsbMscTask(void *argument);
 
 /* USER CODE BEGIN PFP */
@@ -193,6 +210,9 @@ int main(void)
   /* Configure the system clock */
   SystemClock_Config();
 
+  /* Configure the peripherals common clocks */
+  PeriphCommonClock_Config();
+
   /* USER CODE BEGIN SysInit */
   //changed qspi clock from bootloader config to faster
   RCC->D1CCIPR|=RCC_D1CCIPR_QSPISEL_0;
@@ -204,8 +224,10 @@ int main(void)
 
   /* Initialize all configured peripherals */
   MX_GPIO_Init();
+  MX_DMA_Init();
   MX_SDMMC1_MMC_Init();
   MX_FATFS_Init();
+  MX_USART3_UART_Init();
   /* USER CODE BEGIN 2 */
   HAL_GPIO_WritePin(GPIOI, GPIO_PIN_13,1);
   HAL_GPIO_WritePin(GPIOJ, GPIO_PIN_2,0);
@@ -246,6 +268,9 @@ int main(void)
   /* creation of UsbEventQueue */
   UsbEventQueueHandle = osMessageQueueNew (16, sizeof(UsbStageEvent), &UsbEventQueue_attributes);
 
+  /* creation of UartMessageQueue */
+  UartMessageQueueHandle = osMessageQueueNew (10, 128, &UartMessageQueue_attributes);
+
   /* USER CODE BEGIN RTOS_QUEUES */
   /* add queues, ... */
   /* creation of UsbEventQueue - see usb_msc_task.h */
@@ -255,8 +280,8 @@ int main(void)
   /* creation of MemoryTask */
   MemoryTaskHandle = osThreadNew(StartMemoryTask, NULL, &MemoryTask_attributes);
 
-  /* creation of myTask02 */
-  myTask02Handle = osThreadNew(StartTask02, NULL, &myTask02_attributes);
+  /* creation of UartTask */
+  UartTaskHandle = osThreadNew(StartUartTask, NULL, &UartTask_attributes);
 
   /* creation of UsbMscTask */
   UsbMscTaskHandle = osThreadNew(StartUsbMscTask, NULL, &UsbMscTask_attributes);
@@ -346,6 +371,33 @@ void SystemClock_Config(void)
 }
 
 /**
+  * @brief Peripherals Common Clock Configuration
+  * @retval None
+  */
+void PeriphCommonClock_Config(void)
+{
+  RCC_PeriphCLKInitTypeDef PeriphClkInitStruct = {0};
+
+  /** Initializes the peripherals clock
+  */
+  PeriphClkInitStruct.PeriphClockSelection = RCC_PERIPHCLK_USB|RCC_PERIPHCLK_USART3;
+  PeriphClkInitStruct.PLL3.PLL3M = 25;
+  PeriphClkInitStruct.PLL3.PLL3N = 192;
+  PeriphClkInitStruct.PLL3.PLL3P = 2;
+  PeriphClkInitStruct.PLL3.PLL3Q = 4;
+  PeriphClkInitStruct.PLL3.PLL3R = 2;
+  PeriphClkInitStruct.PLL3.PLL3RGE = RCC_PLL3VCIRANGE_0;
+  PeriphClkInitStruct.PLL3.PLL3VCOSEL = RCC_PLL3VCOWIDE;
+  PeriphClkInitStruct.PLL3.PLL3FRACN = 0;
+  PeriphClkInitStruct.Usart234578ClockSelection = RCC_USART234578CLKSOURCE_PLL3;
+  PeriphClkInitStruct.UsbClockSelection = RCC_USBCLKSOURCE_PLL3;
+  if (HAL_RCCEx_PeriphCLKConfig(&PeriphClkInitStruct) != HAL_OK)
+  {
+    Error_Handler();
+  }
+}
+
+/**
   * @brief SDMMC1 Initialization Function
   * @param None
   * @retval None
@@ -373,6 +425,70 @@ static void MX_SDMMC1_MMC_Init(void)
   /* USER CODE BEGIN SDMMC1_Init 2 */
 
   /* USER CODE END SDMMC1_Init 2 */
+
+}
+
+/**
+  * @brief USART3 Initialization Function
+  * @param None
+  * @retval None
+  */
+static void MX_USART3_UART_Init(void)
+{
+
+  /* USER CODE BEGIN USART3_Init 0 */
+
+  /* USER CODE END USART3_Init 0 */
+
+  /* USER CODE BEGIN USART3_Init 1 */
+
+  /* USER CODE END USART3_Init 1 */
+  huart3.Instance = USART3;
+  huart3.Init.BaudRate = 115200;
+  huart3.Init.WordLength = UART_WORDLENGTH_8B;
+  huart3.Init.StopBits = UART_STOPBITS_1;
+  huart3.Init.Parity = UART_PARITY_NONE;
+  huart3.Init.Mode = UART_MODE_TX_RX;
+  huart3.Init.HwFlowCtl = UART_HWCONTROL_NONE;
+  huart3.Init.OverSampling = UART_OVERSAMPLING_16;
+  huart3.Init.OneBitSampling = UART_ONE_BIT_SAMPLE_DISABLE;
+  huart3.Init.ClockPrescaler = UART_PRESCALER_DIV1;
+  huart3.AdvancedInit.AdvFeatureInit = UART_ADVFEATURE_NO_INIT;
+  if (HAL_UART_Init(&huart3) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  if (HAL_UARTEx_SetTxFifoThreshold(&huart3, UART_TXFIFO_THRESHOLD_1_8) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  if (HAL_UARTEx_SetRxFifoThreshold(&huart3, UART_RXFIFO_THRESHOLD_1_8) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  if (HAL_UARTEx_DisableFifoMode(&huart3) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  /* USER CODE BEGIN USART3_Init 2 */
+
+  /* USER CODE END USART3_Init 2 */
+
+}
+
+/**
+  * Enable DMA controller clock
+  */
+static void MX_DMA_Init(void)
+{
+
+  /* DMA controller clock enable */
+  __HAL_RCC_DMA1_CLK_ENABLE();
+
+  /* DMA interrupt init */
+  /* DMA1_Stream0_IRQn interrupt configuration */
+  HAL_NVIC_SetPriority(DMA1_Stream0_IRQn, 5, 0);
+  HAL_NVIC_EnableIRQ(DMA1_Stream0_IRQn);
 
 }
 
@@ -467,16 +583,16 @@ void StartMemoryTask(void *argument)
   /* USER CODE END 5 */
 }
 
-/* USER CODE BEGIN Header_StartTask02 */
+/* USER CODE BEGIN Header_StartUartTask */
 /**
-* @brief Function implementing the myTask02 thread.
+* @brief Function implementing the UartTask thread.
 * @param argument: Not used
 * @retval None
 */
-/* USER CODE END Header_StartTask02 */
-void StartTask02(void *argument)
+/* USER CODE END Header_StartUartTask */
+void StartUartTask(void *argument)
 {
-  /* USER CODE BEGIN StartTask02 */
+  /* USER CODE BEGIN StartUartTask */
   //thread to check if i can read sdmmc properly
 
   uint32_t counter=0;
@@ -492,7 +608,7 @@ void StartTask02(void *argument)
     }
     osDelay(20);
   }
-  /* USER CODE END StartTask02 */
+  /* USER CODE END StartUartTask */
 }
 
  /* MPU Configuration */
