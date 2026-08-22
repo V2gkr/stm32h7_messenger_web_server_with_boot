@@ -228,9 +228,9 @@ int main(void)
   //changed qspi clock from bootloader config to faster
   RCC->D1CCIPR|=RCC_D1CCIPR_QSPISEL_0;
 
-  __HAL_RCC_ETH1MAC_CLK_ENABLE();
-  __HAL_RCC_ETH1TX_CLK_ENABLE();
-  __HAL_RCC_ETH1RX_CLK_ENABLE();
+  // __HAL_RCC_ETH1MAC_CLK_ENABLE();
+  // __HAL_RCC_ETH1TX_CLK_ENABLE();
+  // __HAL_RCC_ETH1RX_CLK_ENABLE();
   /* USER CODE END SysInit */
 
   /* Initialize all configured peripherals */
