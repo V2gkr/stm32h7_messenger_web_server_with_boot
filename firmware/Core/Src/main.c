@@ -28,6 +28,9 @@
 #include "httpd.h"
 #include "mmc_transfer.h"
 #include "usb_msc_task.h"
+#include "uart_transfer.h"
+#include "httpd_post.h"
+#include <string.h>
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -142,7 +145,15 @@ const osSemaphoreAttr_t sdmmc_sem_attributes = {
   .cb_size = sizeof(sdmmc_semControlBlock),
 };
 /* USER CODE BEGIN PV */
-
+/* Signals HAL_UART_TxCpltCallback/ErrorCallback -> UART_SendBlocking()
+ * (uart_transfer.c), mirroring sdmmc_semHandle above. */
+osSemaphoreId_t uartTxSemHandle;
+osStaticSemaphoreDef_t uartTxSemControlBlock;
+const osSemaphoreAttr_t uartTxSem_attributes = {
+  .name = "uartTxSem",
+  .cb_mem = &uartTxSemControlBlock,
+  .cb_size = sizeof(uartTxSemControlBlock),
+};
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -255,6 +266,7 @@ int main(void)
 
   /* USER CODE BEGIN RTOS_SEMAPHORES */
   /* add semaphores, ... */
+  uartTxSemHandle = osSemaphoreNew(1, 0, &uartTxSem_attributes);
   /* USER CODE END RTOS_SEMAPHORES */
 
   /* USER CODE BEGIN RTOS_TIMERS */
@@ -292,6 +304,7 @@ int main(void)
   /* USER CODE END RTOS_THREADS */
 
   /* USER CODE BEGIN RTOS_EVENTS */
+  osMessageQueuePut(UartMessageQueueHandle,"whatsup",0,1000);
   /* add events, ... */
   /* USER CODE END RTOS_EVENTS */
 
@@ -593,20 +606,19 @@ void StartMemoryTask(void *argument)
 void StartUartTask(void *argument)
 {
   /* USER CODE BEGIN StartUartTask */
-  //thread to check if i can read sdmmc properly
-
-  uint32_t counter=0;
   //better to leave it here , it cant be in fatfs_init before scheduler
-  res2 = f_mount(&fs, path, 1); 
+  res2 = f_mount(&fs, path, 1);
+
+  UartMessage msg;
   /* Infinite loop */
   for(;;)
   {
-    if((HAL_GetTick()-counter)>500){
-      counter=HAL_GetTick();
-      
+    if(osMessageQueueGet(UartMessageQueueHandle, &msg, NULL, portMAX_DELAY)==osOK){
+      msg.text[UART_MESSAGE_MAX_LEN-1]='\0';
+      size_t len=strlen(msg.text);
+      UART_SendBlocking(msg.text, (uint16_t)len, 1000);
       HAL_GPIO_TogglePin(GPIOJ, GPIO_PIN_2);
     }
-    osDelay(20);
   }
   /* USER CODE END StartUartTask */
 }
