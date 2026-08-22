@@ -1,0 +1,94 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>STM32 Messenger</title>
+<style>
+  body {
+    font-family: system-ui, sans-serif;
+    max-width: 480px;
+    margin: 3rem auto;
+    padding: 0 1rem;
+    color: #222;
+  }
+  h1 {
+    font-size: 1.25rem;
+  }
+  form {
+    display: flex;
+    gap: 0.5rem;
+    margin-top: 1rem;
+  }
+  input[type="text"] {
+    flex: 1;
+    padding: 0.5rem;
+    font-size: 1rem;
+  }
+  button {
+    padding: 0.5rem 1rem;
+    font-size: 1rem;
+    cursor: pointer;
+  }
+  button:disabled {
+    cursor: default;
+    opacity: 0.6;
+  }
+  #status {
+    margin-top: 0.75rem;
+    min-height: 1.2em;
+    font-size: 0.9rem;
+  }
+  #status.ok { color: #2a7a2a; }
+  #status.err { color: #b3261e; }
+</style>
+</head>
+<body>
+<h1>Send a message to the board (UART)</h1>
+<form id="msgForm">
+  <input type="text" id="msgInput" maxlength="127" placeholder="Type a message..." autocomplete="off" required>
+  <button type="submit" id="sendBtn">Send</button>
+</form>
+<div id="status"></div>
+
+<script>
+const form = document.getElementById('msgForm');
+const input = document.getElementById('msgInput');
+const btn = document.getElementById('sendBtn');
+const status = document.getElementById('status');
+
+form.addEventListener('submit', function (e) {
+  e.preventDefault();
+  const text = input.value;
+  if (!text) return;
+
+  btn.disabled = true;
+  status.textContent = 'Sending...';
+  status.className = '';
+
+  fetch('/message', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    body: 'msg=' + encodeURIComponent(text)
+  })
+    .then(function (resp) {
+      if (!resp.ok) throw new Error('HTTP ' + resp.status);
+      return resp.text();
+    })
+    .then(function () {
+      status.textContent = 'Sent.';
+      status.className = 'ok';
+      input.value = '';
+      input.focus();
+    })
+    .catch(function (err) {
+      status.textContent = 'Failed: ' + err.message;
+      status.className = 'err';
+    })
+    .finally(function () {
+      btn.disabled = false;
+    });
+});
+</script>
+</body>
+</html>
