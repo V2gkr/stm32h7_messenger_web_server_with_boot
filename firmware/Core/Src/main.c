@@ -304,7 +304,6 @@ int main(void)
   /* USER CODE END RTOS_THREADS */
 
   /* USER CODE BEGIN RTOS_EVENTS */
-  osMessageQueuePut(UartMessageQueueHandle,"whatsup",0,1000);
   /* add events, ... */
   /* USER CODE END RTOS_EVENTS */
 
