@@ -52,6 +52,8 @@ target_sources(${CMAKE_PROJECT_NAME} PRIVATE
     Core/Src/usb_msc_task.c
     Core/Src/uart_transfer.c
     Core/Src/httpd_post.c
+    Core/Src/rtc_time.c
+    Core/Src/msg_scheduler.c
 )
 
 # Add include paths

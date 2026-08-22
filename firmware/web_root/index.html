@@ -15,15 +15,31 @@
   h1 {
     font-size: 1.25rem;
   }
-  form {
+  .row {
     display: flex;
     gap: 0.5rem;
+    align-items: center;
     margin-top: 1rem;
   }
   input[type="text"] {
     flex: 1;
     padding: 0.5rem;
     font-size: 1rem;
+  }
+  input[type="datetime-local"] {
+    flex: 1;
+    padding: 0.4rem;
+    font-size: 0.95rem;
+  }
+  input[type="datetime-local"]:disabled {
+    opacity: 0.5;
+  }
+  label {
+    font-size: 0.9rem;
+    white-space: nowrap;
+    display: flex;
+    align-items: center;
+    gap: 0.35rem;
   }
   button {
     padding: 0.5rem 1rem;
@@ -46,8 +62,14 @@
 <body>
 <h1>Send a message to the board (UART)</h1>
 <form id="msgForm">
-  <input type="text" id="msgInput" maxlength="127" placeholder="Type a message..." autocomplete="off" required>
-  <button type="submit" id="sendBtn">Send</button>
+  <div class="row">
+    <input type="text" id="msgInput" maxlength="127" placeholder="Type a message..." autocomplete="off" required>
+    <button type="submit" id="sendBtn">Send</button>
+  </div>
+  <div class="row">
+    <label><input type="checkbox" id="scheduleCheck"> Schedule for later</label>
+    <input type="datetime-local" id="scheduleInput" disabled>
+  </div>
 </form>
 <div id="status"></div>
 
@@ -56,11 +78,47 @@ const form = document.getElementById('msgForm');
 const input = document.getElementById('msgInput');
 const btn = document.getElementById('sendBtn');
 const status = document.getElementById('status');
+const scheduleCheck = document.getElementById('scheduleCheck');
+const scheduleInput = document.getElementById('scheduleInput');
+
+/* datetime-local wants "YYYY-MM-DDTHH:MM" in the *browser's* local time -
+ * building it from getFullYear()/getMonth()/etc rather than toISOString()
+ * keeps it local instead of UTC, so the input starts out reading as "now". */
+function toLocalDatetimeValue(date) {
+  const pad = (n) => String(n).padStart(2, '0');
+  return date.getFullYear() + '-' + pad(date.getMonth() + 1) + '-' + pad(date.getDate())
+    + 'T' + pad(date.getHours()) + ':' + pad(date.getMinutes());
+}
+
+scheduleCheck.addEventListener('change', function () {
+  scheduleInput.disabled = !scheduleCheck.checked;
+  if (scheduleCheck.checked && !scheduleInput.value) {
+    scheduleInput.value = toLocalDatetimeValue(new Date());
+  }
+});
 
 form.addEventListener('submit', function (e) {
   e.preventDefault();
   const text = input.value;
   if (!text) return;
+
+  let body = 'msg=' + encodeURIComponent(text);
+  let scheduled = false;
+
+  if (scheduleCheck.checked && scheduleInput.value) {
+    /* new Date(datetime-local value) parses it as local time and
+     * .getTime() already accounts for the browser's timezone/DST, so this
+     * lands on the correct UTC epoch with no manual timezone math - the
+     * board only ever deals in UTC (see rtc_time.h). */
+    const whenEpoch = Math.floor(new Date(scheduleInput.value).getTime() / 1000);
+    if (!Number.isFinite(whenEpoch)) {
+      status.textContent = 'Invalid date/time.';
+      status.className = 'err';
+      return;
+    }
+    body += '&when=' + whenEpoch;
+    scheduled = true;
+  }
 
   btn.disabled = true;
   status.textContent = 'Sending...';
@@ -69,14 +127,16 @@ form.addEventListener('submit', function (e) {
   fetch('/message', {
     method: 'POST',
     headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-    body: 'msg=' + encodeURIComponent(text)
+    body: body
   })
     .then(function (resp) {
       if (!resp.ok) throw new Error('HTTP ' + resp.status);
       return resp.text();
     })
     .then(function () {
-      status.textContent = 'Sent.';
+      status.textContent = scheduled
+        ? 'Scheduled for ' + scheduleInput.value.replace('T', ' ') + '.'
+        : 'Sent.';
       status.className = 'ok';
       input.value = '';
       input.focus();

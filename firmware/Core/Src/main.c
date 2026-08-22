@@ -30,6 +30,10 @@
 #include "usb_msc_task.h"
 #include "uart_transfer.h"
 #include "httpd_post.h"
+#include "rtc_time.h"
+#include "msg_scheduler.h"
+#include "sntp.h"
+#include "lwip/ip_addr.h"
 #include <string.h>
 /* USER CODE END Includes */
 
@@ -53,6 +57,8 @@ typedef StaticSemaphore_t osStaticSemaphoreDef_t;
 /* USER CODE END PM */
 
 /* Private variables ---------------------------------------------------------*/
+
+RTC_HandleTypeDef hrtc;
 
 MMC_HandleTypeDef hmmc1;
 
@@ -95,6 +101,18 @@ const osThreadAttr_t UsbMscTask_attributes = {
   .stack_size = sizeof(UsbMscTaskBuffer),
   .priority = (osPriority_t) osPriorityAboveNormal,
 };
+/* Definitions for SchedTask */
+osThreadId_t SchedTaskHandle;
+uint32_t SchedTaskBuffer[ 128 ];
+osStaticThreadDef_t SchedTaskControlBlock;
+const osThreadAttr_t SchedTask_attributes = {
+  .name = "SchedTask",
+  .cb_mem = &SchedTaskControlBlock,
+  .cb_size = sizeof(SchedTaskControlBlock),
+  .stack_mem = &SchedTaskBuffer[0],
+  .stack_size = sizeof(SchedTaskBuffer),
+  .priority = (osPriority_t) osPriorityLow,
+};
 /* Definitions for memoryqueue */
 osMessageQueueId_t memoryqueueHandle;
 uint8_t memoryqueueBuffer[ 10 * sizeof( FsDataStruct ) ];
@@ -128,13 +146,21 @@ const osMessageQueueAttr_t UartMessageQueue_attributes = {
   .mq_mem = &UartMessageQueueBuffer,
   .mq_size = sizeof(UartMessageQueueBuffer)
 };
-/* Definitions for SdmmcMutex */
-osMutexId_t SdmmcMutexHandle;
-osStaticMutexDef_t SdmmcMutexControlBlock;
-const osMutexAttr_t SdmmcMutex_attributes = {
-  .name = "SdmmcMutex",
-  .cb_mem = &SdmmcMutexControlBlock,
-  .cb_size = sizeof(SdmmcMutexControlBlock),
+/* Definitions for rtcMutex */
+osMutexId_t rtcMutexHandle;
+osStaticMutexDef_t rtcMutexControlBlock;
+const osMutexAttr_t rtcMutex_attributes = {
+  .name = "rtcMutex",
+  .cb_mem = &rtcMutexControlBlock,
+  .cb_size = sizeof(rtcMutexControlBlock),
+};
+/* Definitions for SchedMutex */
+osMutexId_t SchedMutexHandle;
+osStaticMutexDef_t SchedMutexControlBlock;
+const osMutexAttr_t SchedMutex_attributes = {
+  .name = "SchedMutex",
+  .cb_mem = &SchedMutexControlBlock,
+  .cb_size = sizeof(SchedMutexControlBlock),
 };
 /* Definitions for sdmmc_sem */
 osSemaphoreId_t sdmmc_semHandle;
@@ -164,9 +190,11 @@ static void MX_GPIO_Init(void);
 static void MX_DMA_Init(void);
 static void MX_SDMMC1_MMC_Init(void);
 static void MX_USART3_UART_Init(void);
+static void MX_RTC_Init(void);
 void StartMemoryTask(void *argument);
 void StartUartTask(void *argument);
 extern void StartUsbMscTask(void *argument);
+void StartSchedTask(void *argument);
 
 /* USER CODE BEGIN PFP */
 
@@ -239,6 +267,7 @@ int main(void)
   MX_SDMMC1_MMC_Init();
   MX_FATFS_Init();
   MX_USART3_UART_Init();
+  MX_RTC_Init();
   /* USER CODE BEGIN 2 */
   HAL_GPIO_WritePin(GPIOI, GPIO_PIN_13,1);
   HAL_GPIO_WritePin(GPIOJ, GPIO_PIN_2,0);
@@ -248,13 +277,29 @@ int main(void)
    * raw lwIP API calls can't race tcpip_thread or the EthIf RX task, which
    * don't exist yet at this point. See lwip.c's MX_LWIP_Init(). */
   MX_LWIP_Init();
+
+  /* NTP sync: local chrony instance on the dev machine (192.168.0.14) -
+   * the router at 192.168.0.1 doesn't answer NTP (confirmed by probing it
+   * directly). sntp_init() doesn't need to wait for the Ethernet link to
+   * actually be up first - SNTP's own internal retry/backoff
+   * (SNTP_RETRY_TIMEOUT) covers a first attempt that goes out too early.
+   * No re-sync logic beyond this: SNTP_UPDATE_DELAY's default ~1h re-poll
+   * (lwipopts.h) is left as-is, which is enough to self-correct a bad sync
+   * without any custom code - see rtc_time.h/msg_scheduler.h. */
+  ip_addr_t ntp_server;
+  IP4_ADDR(&ntp_server, 192, 168, 0, 14);
+  sntp_setserver(0, &ntp_server);
+  sntp_init();
   /* USER CODE END 2 */
 
   /* Init scheduler */
   osKernelInitialize();
   /* Create the mutex(es) */
-  /* creation of SdmmcMutex */
-  SdmmcMutexHandle = osMutexNew(&SdmmcMutex_attributes);
+  /* creation of rtcMutex */
+  rtcMutexHandle = osMutexNew(&rtcMutex_attributes);
+
+  /* creation of SchedMutex */
+  SchedMutexHandle = osMutexNew(&SchedMutex_attributes);
 
   /* USER CODE BEGIN RTOS_MUTEX */
   /* add mutexes, ... */
@@ -297,6 +342,9 @@ int main(void)
 
   /* creation of UsbMscTask */
   UsbMscTaskHandle = osThreadNew(StartUsbMscTask, NULL, &UsbMscTask_attributes);
+
+  /* creation of SchedTask */
+  SchedTaskHandle = osThreadNew(StartSchedTask, NULL, &SchedTask_attributes);
 
   /* USER CODE BEGIN RTOS_THREADS */
   /* add threads, ... */
@@ -346,8 +394,9 @@ void SystemClock_Config(void)
   /** Initializes the RCC Oscillators according to the specified parameters
   * in the RCC_OscInitTypeDef structure.
   */
-  RCC_OscInitStruct.OscillatorType = RCC_OSCILLATORTYPE_HSE;
+  RCC_OscInitStruct.OscillatorType = RCC_OSCILLATORTYPE_LSI|RCC_OSCILLATORTYPE_HSE;
   RCC_OscInitStruct.HSEState = RCC_HSE_ON;
+  RCC_OscInitStruct.LSIState = RCC_LSI_ON;
   RCC_OscInitStruct.PLL.PLLState = RCC_PLL_ON;
   RCC_OscInitStruct.PLL.PLLSource = RCC_PLLSOURCE_HSE;
   RCC_OscInitStruct.PLL.PLLM = 2;
@@ -407,6 +456,42 @@ void PeriphCommonClock_Config(void)
   {
     Error_Handler();
   }
+}
+
+/**
+  * @brief RTC Initialization Function
+  * @param None
+  * @retval None
+  */
+static void MX_RTC_Init(void)
+{
+
+  /* USER CODE BEGIN RTC_Init 0 */
+
+  /* USER CODE END RTC_Init 0 */
+
+  /* USER CODE BEGIN RTC_Init 1 */
+
+  /* USER CODE END RTC_Init 1 */
+
+  /** Initialize RTC Only
+  */
+  hrtc.Instance = RTC;
+  hrtc.Init.HourFormat = RTC_HOURFORMAT_24;
+  hrtc.Init.AsynchPrediv = 127;
+  hrtc.Init.SynchPrediv = 255;
+  hrtc.Init.OutPut = RTC_OUTPUT_DISABLE;
+  hrtc.Init.OutPutPolarity = RTC_OUTPUT_POLARITY_HIGH;
+  hrtc.Init.OutPutType = RTC_OUTPUT_TYPE_OPENDRAIN;
+  hrtc.Init.OutPutRemap = RTC_OUTPUT_REMAP_NONE;
+  if (HAL_RTC_Init(&hrtc) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  /* USER CODE BEGIN RTC_Init 2 */
+
+  /* USER CODE END RTC_Init 2 */
+
 }
 
 /**
@@ -620,6 +705,25 @@ void StartUartTask(void *argument)
     }
   }
   /* USER CODE END StartUartTask */
+}
+
+/* USER CODE BEGIN Header_StartSchedTask */
+/**
+* @brief Function implementing the SchedTask thread.
+* @param argument: Not used
+* @retval None
+*/
+/* USER CODE END Header_StartSchedTask */
+void StartSchedTask(void *argument)
+{
+  /* USER CODE BEGIN StartSchedTask */
+  /* Infinite loop */
+  for(;;)
+  {
+    osDelay(1000);
+    Scheduler_Poll();
+  }
+  /* USER CODE END StartSchedTask */
 }
 
  /* MPU Configuration */

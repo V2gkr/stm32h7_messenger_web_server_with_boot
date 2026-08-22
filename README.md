@@ -63,6 +63,22 @@ plug the board in as a USB mass-storage device and copy
 card's root. Editing the page only requires re-copying the file - no
 rebuild/reflash needed.
 
+## Time sync (NTP/RTC) and scheduled messages
+
+The board syncs its RTC once at boot via SNTP, then keeps time on its own
+(LSE-clocked RTC) - see `Core/Src/rtc_time.c`/`Core/Src/msg_scheduler.c` for
+the scheduled-message design. The NTP server address is hard-coded in
+`main.c` (`USER CODE BEGIN 2`, right after `MX_LWIP_Init()`).
+
+**The board's router does not answer NTP** (confirmed by direct probing -
+`192.168.0.1` times out on UDP/123). The board is instead pointed at
+`192.168.0.14` - a `chrony` instance manually set up on the dev machine to
+serve the `192.168.0.0/24` subnet (`allow 192.168.0.0/24` in
+`/etc/chrony/chrony.conf`, `sudo systemctl restart chrony` to pick it up).
+That means **the dev machine has to be up and on the network** for the board
+to get real time; if it's ever swapped out or its IP changes, update the
+`IP4_ADDR(&ntp_server, ...)` call in `main.c` to match.
+
 ## Editing both projects at once
 
 Open [`stm32h7-messenger-with-boot.code-workspace`](stm32h7-messenger-with-boot.code-workspace)

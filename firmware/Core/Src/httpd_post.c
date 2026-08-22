@@ -9,6 +9,8 @@
 #include "lwip/pbuf.h"
 #include "lwip/err.h"
 #include "uart_transfer.h"
+#include "rtc_time.h"
+#include "msg_scheduler.h"
 #include "cmsis_os2.h"
 #include <string.h>
 #include <stdlib.h>
@@ -24,8 +26,8 @@ extern osMessageQueueId_t UartMessageQueueHandle;
 
 /** Cap on the raw (still URL-encoded) POST body. Comfortably covers a
   * UART_MESSAGE_MAX_LEN-1 character message even at 3x expansion (every
-  * character percent-encoded) plus the "msg=" prefix. */
-#define POST_MAX_BODY        400U
+  * character percent-encoded) plus the "msg=" and "&when=<epoch>" fields. */
+#define POST_MAX_BODY        512U
 /** How many POST requests can be mid-flight at once. This device only ever
   * expects one browser talking to it, but a couple of spare slots avoids
   * needlessly denying a second tab/retry. */
@@ -113,6 +115,30 @@ static void post_extract_msg(const char *body, uint16_t body_len, char *out, siz
   }
 }
 
+/** Finds "when=" (an optional UTC unix-epoch-seconds field) in an
+  * accumulated application/x-www-form-urlencoded body. Returns 0 if the
+  * field is absent, empty, or not a valid decimal number - callers already
+  * treat 0 as "no scheduled time, send now" (see httpd_post_finished()). */
+static uint32_t post_extract_epoch(const char *body, uint16_t body_len)
+{
+  static const char key[] = "when=";
+  const size_t key_len = sizeof(key) - 1U;
+
+  for (uint16_t i = 0; i + key_len <= body_len; i++)
+  {
+    if (memcmp(&body[i], key, key_len) == 0)
+    {
+      uint16_t value_start = i + key_len;
+      char *endptr;
+      unsigned long value = strtoul(&body[value_start], &endptr, 10);
+      if (endptr == &body[value_start])
+        return 0U;
+      return (uint32_t)value;
+    }
+  }
+  return 0U;
+}
+
 err_t httpd_post_begin(void *connection, const char *uri, const char *http_request,
                         u16_t http_request_len, int content_len, char *response_uri,
                         u16_t response_uri_len, u8_t *post_auto_wnd)
@@ -163,13 +189,29 @@ void httpd_post_finished(void *connection, char *response_uri, u16_t response_ur
   {
     slot->body[slot->used] = '\0';
     post_extract_msg(slot->body, slot->used, msg.text, sizeof(msg.text));
+    uint32_t when = post_extract_epoch(slot->body, slot->used);
     post_slot_free(slot);
 
     if (msg.text[0] != '\0')
     {
-      /* Never block tcpip_thread: 0 timeout, drop the message if UartTask
-       * has fallen behind and the queue is full. */
-      (void)osMessageQueuePut(UartMessageQueueHandle, &msg, 0, 0);
+      /* when==0 (field absent) or already due (<= now, including the
+       * desync case: a scheduled time that had already passed by the time
+       * it got here, whether because it was in the past when submitted or
+       * because the RTC wasn't caught up yet) both fall through to the
+       * same immediate path as Phase 1 - no special-casing needed. */
+      uint32_t now = RTC_GetUnixTime();
+      if (when == 0U || when <= now)
+      {
+        /* Never block tcpip_thread: 0 timeout, drop the message if UartTask
+         * has fallen behind and the queue is full. */
+        (void)osMessageQueuePut(UartMessageQueueHandle, &msg, 0, 0);
+      }
+      else if (!Scheduler_Submit(&msg, when))
+      {
+        /* Pending table full or SchedMutex busy - fail open: send now
+         * rather than silently lose the message. */
+        (void)osMessageQueuePut(UartMessageQueueHandle, &msg, 0, 0);
+      }
     }
   }
 

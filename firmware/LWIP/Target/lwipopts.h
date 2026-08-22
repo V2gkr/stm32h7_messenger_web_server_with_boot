@@ -101,6 +101,8 @@
 #define LWIP_HTTPD_CUSTOM_FILES 1
 /*----- Default Value for LWIP_HTTPD_DYNAMIC_FILE_READ: 0 ---*/
 #define LWIP_HTTPD_DYNAMIC_FILE_READ 1
+/*----- Default Value for LWIP_SNTP: 0 ---*/
+#define LWIP_SNTP 1
 /*----- Value in opt.h for LWIP_STATS: 1 -----*/
 #define LWIP_STATS 0
 /*----- Value in opt.h for CHECKSUM_GEN_IP: 1 -----*/
@@ -133,6 +135,18 @@
 extern char _lwip_heap_start;
 #undef LWIP_RAM_HEAP_POINTER
 #define LWIP_RAM_HEAP_POINTER (&_lwip_heap_start)
+
+/* lwIP 2.1.2's SNTP app has no sntp_set_system_time() function to
+ * implement - the integration point is this macro (see sntp_opts.h),
+ * called from sntp.c's UDP receive callback on tcpip_thread whenever a
+ * sync reply arrives. RTC_SetUnixTime() (rtc_time.h) is itself bounded/
+ * non-blocking-safe for that context - see its header comment. */
+#include "rtc_time.h"
+#define SNTP_SET_SYSTEM_TIME(sec) RTC_SetUnixTime(sec)
+/* Basic sanity-checking of replies (reject if e.g. the server address in
+ * the reply doesn't match who we asked) - cheap, worth having since a bad
+ * time write here would throw off every scheduled message's due check. */
+#define SNTP_CHECK_RESPONSE 1
 
 /* USER CODE END 1 */
 
